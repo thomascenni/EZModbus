@@ -1,0 +1,241 @@
+/**
+ * @file ModbusLogger.h
+ * @brief Thread-safe & non-blocking log sink implementation for EZModbus debug output
+ */
+
+#pragma once
+
+#ifndef NATIVE_TEST
+
+#include <stdio.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <freertos/event_groups.h>
+#include <string.h>
+#include <stdarg.h>
+
+// Driver includes for log output
+#ifdef ARDUINO
+    #include <Arduino.h>
+#elif defined(ESP_IDF_VERSION)
+    #include <driver/uart.h>
+#endif
+
+// =============================================================================
+// LOG DESTINATION & CHUNK SIZE CONFIGURATION
+// =============================================================================
+
+// Default log destination (add user define flag to override)
+#ifndef EZMODBUS_LOG_OUTPUT
+    #ifdef ARDUINO
+        #define EZMODBUS_LOG_OUTPUT Serial
+    #elif defined(ESP_IDF_VERSION)
+        #define EZMODBUS_LOG_OUTPUT UART_NUM_0
+    #endif
+#endif
+
+// Default log chunk size
+#ifndef EZMODBUS_LOG_CHUNK_SIZE
+    #ifdef ARDUINO
+        #define EZMODBUS_LOG_CHUNK_SIZE 64
+    #elif defined(ESP_IDF_VERSION)
+        #define EZMODBUS_LOG_CHUNK_SIZE 128
+    #endif
+#endif
+
+// Default flush function
+#ifndef EZMODBUS_LOG_FLUSH
+    #ifdef ARDUINO
+        #define EZMODBUS_LOG_FLUSH() EZMODBUS_LOG_OUTPUT.flush()
+    #elif defined(ESP_IDF_VERSION)
+        #define EZMODBUS_LOG_FLUSH() uart_wait_tx_done(EZMODBUS_LOG_OUTPUT, pdMS_TO_TICKS(500))
+    #endif
+#endif
+
+namespace Modbus {
+
+class Logger {
+
+public:
+    static constexpr size_t QUEUE_SIZE = 16;
+    static constexpr size_t MAX_MSG_SIZE = 512;
+    static constexpr size_t TASK_PRIORITY = 1;
+    static constexpr uint32_t STACK_SIZE = 4096;
+    static constexpr uint32_t CHECK_INTERVAL = 100;
+    
+    // Event bits for queue status
+    static constexpr EventBits_t QUEUE_EMPTY_BIT = BIT0;
+
+    struct LogMessage {
+        char msg[MAX_MSG_SIZE];
+    };
+
+    // Automatic initialization
+    static void begin() {
+        if (!initialized) {
+            // Create the message queue
+            logQueue = xQueueCreate(QUEUE_SIZE, sizeof(LogMessage));
+            
+            // Create event group for queue status
+            queueEventGroup = xEventGroupCreate();
+            
+            // Create the logging task
+            BaseType_t taskCreated = xTaskCreatePinnedToCore(
+                logTask,
+                "LogTask",
+                STACK_SIZE,
+                NULL,
+                TASK_PRIORITY,
+                &logTaskHandle,
+                1
+            );
+            
+            if (logQueue && queueEventGroup && taskCreated == pdPASS) {
+                // Initially queue is empty
+                xEventGroupSetBits(queueEventGroup, QUEUE_EMPTY_BIT);
+                initialized = true;
+            }
+        }
+    }
+
+    // Simple logging methods
+    static void logln(const char* message = "") {
+        char buffer[MAX_MSG_SIZE];
+        if (*message == '\0') {
+            // Empty line → CRLF for it to be visible
+            strcpy(buffer, "\r\n");
+        } else {
+            snprintf(buffer, sizeof(buffer), "%s\r\n", message);
+        }
+        sendToQueue(buffer);
+    }
+
+    static void logf(const char* format, ...) {
+        char buffer[MAX_MSG_SIZE];
+        va_list args;
+        va_start(args, format);
+        vsnprintf(buffer, sizeof(buffer), format, args);
+        va_end(args);
+        sendToQueue(buffer);
+    }
+    
+    // Wait for all messages to be flushed from the queue
+    static void waitQueueFlushed() {
+        if (!initialized) return; // Consider empty if not initialized
+        
+        // Wait for the queue to be empty
+        EventBits_t bits = xEventGroupWaitBits(
+            queueEventGroup,
+            QUEUE_EMPTY_BIT,
+            pdFALSE,  // Don't clear the bit
+            pdTRUE,   // Wait for all bits (only one here)
+            portMAX_DELAY
+        );
+
+        EZMODBUS_LOG_FLUSH(); // Flush the UART buffer
+        return;
+    }
+
+private:
+    inline static bool initialized = false;
+    inline static QueueHandle_t logQueue = nullptr;
+    inline static TaskHandle_t logTaskHandle = nullptr;
+    inline static EventGroupHandle_t queueEventGroup = nullptr;
+
+    // Send a message to the queue
+    static void sendToQueue(const char* message) {
+        if (!initialized) begin(); // Initialize if not already initialized
+        if (!initialized) return; // Abort if initialization failed
+        
+        LogMessage msg;
+        strncpy(msg.msg, message, MAX_MSG_SIZE - 1);
+        msg.msg[MAX_MSG_SIZE - 1] = '\0';
+        
+        // Clear empty bit when adding message
+        xEventGroupClearBits(queueEventGroup, QUEUE_EMPTY_BIT);
+        xQueueSend(logQueue, &msg, 0); // Send without waiting if queue is full
+    }
+    
+    // Task that reads the queue and writes the logs
+    static void logTask(void* parameter) {
+        LogMessage msg;
+        while (true) {
+            if (xQueueReceive(logQueue, &msg, CHECK_INTERVAL) == pdTRUE) {
+                writeOutput(msg.msg, strlen(msg.msg));
+                
+                // Check if queue is now empty and set bit accordingly
+                if (uxQueueMessagesWaiting(logQueue) == 0) {
+                    xEventGroupSetBits(queueEventGroup, QUEUE_EMPTY_BIT);
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+
+// =============================================================================
+// PLATFORM-SPECIFIC IMPLEMENTATIONS OF writeOutput()
+// =============================================================================
+
+    #if defined(ARDUINO)
+        static void writeOutput(const char* data, size_t len) {
+            const char* ptr = data;
+            size_t remaining = len;
+            
+            while (remaining > 0) {
+                size_t chunk = (remaining > EZMODBUS_LOG_CHUNK_SIZE) ? EZMODBUS_LOG_CHUNK_SIZE : remaining;
+                size_t written = EZMODBUS_LOG_OUTPUT.write((const uint8_t*)ptr, chunk);
+                
+                if (written == 0) {
+                    vTaskDelay(pdMS_TO_TICKS(5)); // Wait for the buffer to be flushed
+                    continue;
+                }
+                
+                ptr += written;
+                remaining -= written;
+                
+                if (remaining > 0) {
+                    vTaskDelay(pdMS_TO_TICKS(1)); // Yield before next chunk
+                }
+            }
+            
+            vTaskDelay(pdMS_TO_TICKS(5)); // Wait for the buffer to be flushed
+        }
+        
+    #elif defined(ESP_IDF_VERSION)
+        static void writeOutput(const char* data, size_t len) {
+            const char* ptr = data;
+            size_t remaining = len;
+            
+            while (remaining > 0) {
+                size_t chunk = (remaining > EZMODBUS_LOG_CHUNK_SIZE) ? EZMODBUS_LOG_CHUNK_SIZE : remaining;
+                int written = uart_write_bytes(EZMODBUS_LOG_OUTPUT, ptr, chunk);
+                
+                if (written <= 0) {
+                    vTaskDelay(pdMS_TO_TICKS(5)); // Wait for the buffer to be flushed
+                    continue;
+                }
+                
+                ptr += written;
+                remaining -= written;
+                
+                if (remaining > 0) {
+                    vTaskDelay(pdMS_TO_TICKS(1)); // Yield before next chunk
+                }
+            }
+            
+            vTaskDelay(pdMS_TO_TICKS(5)); // Wait for the buffer to be flushed
+        }
+
+    #else
+        // Use printf by default
+        static void writeOutput(const char* data, size_t len) {
+            printf("%s", data);
+        }
+        
+    #endif
+};
+
+} // namespace Modbus
+
+#endif // NATIVE_TEST
