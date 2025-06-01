@@ -65,9 +65,6 @@ UART uart(RS485_SERIAL, RS485_BAUD_RATE, RS485_CONFIG, RS485_RX_PIN, RS485_TX_PI
 ModbusRTU interface(uart, Modbus::SERVER);
 ModbusServer server(interface, GREENHOUSE_SLAVE_ID);
 
-// RTOS task handle
-TaskHandle_t modbusPollingTaskHandle = NULL;
-
 // Variables for register storage
 struct {
     // Input registers
@@ -103,7 +100,6 @@ void setupRegisters();
 void updateSensors();
 void updateActuators();
 void checkAlarms();
-void modbusPollingTask(void* parameter);
 
 // Utility function to log register write access
 void logRegisterWrite(const ModbusRegister& ctx, uint16_t value, const char* status = nullptr) {
@@ -133,17 +129,12 @@ void setup() {
     pinMode(HUMID_SENSOR_PIN, INPUT);
     pinMode(LIGHT_SENSOR_PIN, INPUT);
 
-    // Initialize UART
+    // Initialize UART driver
     uart.begin();
-
-    // Initialize Modbus RTU interface and server
-    if (interface.begin() != ModbusRTU::SUCCESS) {
-        Serial.println("Failed to initialize Modbus interface");
-        while (1) { delay(1000); } // Halt
-    }
     
+    // Initialize Modbus Server
     if (server.begin() != ModbusServer::SUCCESS) {
-        Serial.println("Failed to initialize Modbus server");
+        Serial.println("Failed to initialize Modbus Server");
         while (1) { delay(1000); } // Halt
     }
     
@@ -151,16 +142,6 @@ void setup() {
     
     // Setup Modbus registers
     setupRegisters();
-    
-    // Create the Modbus polling task
-    xTaskCreate(
-        modbusPollingTask,
-        "ModbusPoll",
-        8192,           // Stack size
-        NULL,           // Parameters
-        3,              // Priority (3 = medium)
-        &modbusPollingTaskHandle
-    );
 }
 
 void loop() {
@@ -425,14 +406,4 @@ void checkAlarms() {
     
     // Water low alarm at 10%
     greenhouse.waterLowAlarm = (greenhouse.waterLevel <= 10);
-}
-
-// Task for polling Modbus server in the background
-void modbusPollingTask(void* parameter) {
-    Serial.println("Modbus polling task started");
-    
-    while (true) {
-        server.poll();
-        vTaskDelay(pdMS_TO_TICKS(1)); // Poll every 1ms
-    }
 }

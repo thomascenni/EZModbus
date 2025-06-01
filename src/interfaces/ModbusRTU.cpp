@@ -12,7 +12,6 @@ namespace ModbusInterface {
 
 RTU::RTU(ModbusHAL::UART& uart, Modbus::Role role)
     : _uartHAL(uart),
-      _silenceTimeUs(RTU::DEFAULT_SILENCE_TIME_US),
       _rxBuffer(_rxBuf.data(), _rxBuf.size()),
       _txBuffer(_txBuf.data(), _txBuf.size()),
       _txMutex(),
@@ -101,16 +100,23 @@ RTU::Result RTU::begin() {
         return Error(ERR_INIT_FAILED, "failed to create rxTxTask");
     }
     
-    Result resIdleCfg = updateUartIdleDetection(); 
+    // Configure UART idle detection (silence time)
+    Result resIdleCfg = ERR_CONFIG_FAILED;
+    if (_silenceTimeUs > 0) {
+        // If the silence time was already set by the user, use it
+        resIdleCfg = updateUartIdleDetection();
+    } else {
+        // Otherwise, set the silence time based on the baud rate
+        resIdleCfg = setSilenceTimeBaud(); 
+    }
     if (resIdleCfg != SUCCESS) {
         _isInitialized = false;
         killRxTxTask();
         beginCleanup();
-        return Error(ERR_INIT_FAILED, "failed to configure idle detection");
+        return Error(ERR_INIT_FAILED, "failed to configure UART idle detection");
     }
 
-    Modbus::Debug::LOG_MSG(std::string("Interface ready. UART Port: ") + std::to_string(_uartHAL.getPort()) +
-                         ", Initial silence time: " + std::to_string(_silenceTimeUs) + " us. Call setSilenceTimeBaud/Ms to override");
+    Modbus::Debug::LOG_MSGF("Interface ready. UART Port: %d, silence time: %llu us. Call setSilenceTimeMs to override", _uartHAL.getPort(), _silenceTimeUs);
     
     return Success();
 }
@@ -122,23 +128,23 @@ RTU::Result RTU::begin() {
  * @note If the interface isn't initialized, the silence time will be applied when begin() is called
  */
 RTU::Result RTU::setSilenceTimeMs(uint32_t silenceTimeMs) {
+    // Calculate the new silence time in microseconds
     if (silenceTimeMs < 1) silenceTimeMs = 1; 
     uint64_t newSilenceTimeUs = static_cast<uint64_t>(silenceTimeMs) * 1000;
     
+    // Apply the new silence time only if it's different from the current one
     if (newSilenceTimeUs != _silenceTimeUs) {
         _silenceTimeUs = newSilenceTimeUs;
-        Modbus::Debug::LOG_MSG(std::string("New silence time set to ") + std::to_string(silenceTimeMs) + " ms (" + std::to_string(_silenceTimeUs) + " us)");
-        
-        // If RTU not initialized, the idle detection will be updated when begin() is called.
-        // Otherwise, update it immediately.
+        // If the interface isn't yet initialized, the silence time will be applied when begin() is called
         if (_isInitialized) {
             Result resIdleCfg = updateUartIdleDetection();
             if (resIdleCfg != SUCCESS) {
-                return Error(ERR_CONFIG_FAILED, "silenceTimeUs updated but failed to apply to UART HAL");
+                return Error(ERR_CONFIG_FAILED, "failed to apply silence time to UART HAL");
             }
         }
     }
 
+    Modbus::Debug::LOG_MSGF("Silence time set to %d ms (%d us)", silenceTimeMs, _silenceTimeUs);
     return Success();
 }
 
@@ -148,34 +154,34 @@ RTU::Result RTU::setSilenceTimeMs(uint32_t silenceTimeMs) {
  * @note Uses 3.5T as specified in the Modbus standard + 200us margin
  * @note If the interface isn't initialized, the silence time will be applied when begin() is called
  */
-RTU::Result RTU::setSilenceTimeBaud(uint32_t baudRateFromUser) {
-    if (baudRateFromUser == 0) {
-        return Error(ERR_CONFIG_FAILED, "cannot use null baud rate"); 
+RTU::Result RTU::setSilenceTimeBaud() {
+    // Get the baud rate from the HAL
+    uint32_t baudRate = _uartHAL.getBaudrate();
+    if (baudRate == 0) {
+        return Error(ERR_CONFIG_FAILED, "HAL returned an invalid baud rate"); 
     }
     
+    // Calculate the silence time based on the baud rate
     constexpr uint32_t bitsPerChar = 11; 
     constexpr uint32_t usPerSec = 1000000;
     constexpr float charMultiplier = 3.5f;
-    
-    uint64_t usPerChar_calc = (bitsPerChar * usPerSec) / baudRateFromUser;
+    uint64_t usPerChar_calc = (bitsPerChar * usPerSec) / baudRate;
     uint64_t newSilenceTimeUs = static_cast<uint64_t>(charMultiplier * usPerChar_calc);
-    
     newSilenceTimeUs += 200; // Add 200us margin
 
+    // Apply the new silence time only if it's different from the current one
     if (newSilenceTimeUs != _silenceTimeUs) {
         _silenceTimeUs = newSilenceTimeUs;
-        Modbus::Debug::LOG_MSG(std::string("New silence time for baud ") + std::to_string(baudRateFromUser) + 
-                        " set to " + std::to_string(_silenceTimeUs) + " us");
-
-        // If RTU not initialized, the idle detection will be updated when begin() is called.
-        // Otherwise, update it immediately.
-        if (_isInitialized) { 
+        // If the interface isn't yet initialized, the silence time will be applied when begin() is called
+        if (_isInitialized) {
             Result resIdleCfg = updateUartIdleDetection();
             if (resIdleCfg != SUCCESS) {
-                return Error(ERR_CONFIG_FAILED, "silenceTimeUs updated but failed to apply to UART HAL");
+                return Error(ERR_CONFIG_FAILED, "failed to apply silence time to UART HAL");
             }
         }
     }
+
+    Modbus::Debug::LOG_MSGF("Silence time for baud rate %d bps set to %d us", baudRate, _silenceTimeUs);
     return Success();
 }
 
@@ -347,7 +353,7 @@ RTU::Result RTU::processReceivedFrame(const ByteBuffer& frameBytes) {
  */
 RTU::Result RTU::updateUartIdleDetection() {
     if (!_uartHAL.getRegisteredEventQueue()) {
-        return Error(ERR_CONFIG_FAILED, "UART not ready");
+        return Error(ERR_CONFIG_FAILED, "UART not ready, cannot update idle detection timeout");
     }
 
     esp_err_t err = _uartHAL.setTimeoutMicroseconds(_silenceTimeUs);
@@ -355,7 +361,7 @@ RTU::Result RTU::updateUartIdleDetection() {
         return Error(ERR_CONFIG_FAILED, esp_err_to_name(err));
     }
 
-    Modbus::Debug::LOG_MSG(std::string("UART idle detection time set to: ") + std::to_string(_silenceTimeUs) + " us");
+    Modbus::Debug::LOG_MSGF("UART idle detection time set to: %d us", _silenceTimeUs);
     return Success();
 }
 
@@ -403,7 +409,7 @@ RTU::Result RTU::handleUartEvent(const uart_event_t& event) {
                 // & flush or let processReceivedFrame() fail).
                 if (bytesActuallyRead > 0) {
                     _rxBuffer.trim(currentSize + bytesActuallyRead);
-                    Modbus::Debug::LOG_MSG("Pulled " + std::to_string(bytesActuallyRead) + " bytes from UART into RX buffer, total " + std::to_string(_rxBuffer.size()));
+                    Modbus::Debug::LOG_MSGF("Pulled %d bytes from UART into RX buffer, total %zu", bytesActuallyRead, _rxBuffer.size());
                 } 
 
                 // If read returned <0, it indicates an UART error, we flush everything
@@ -416,13 +422,13 @@ RTU::Result RTU::handleUartEvent(const uart_event_t& event) {
                 if (bytesActuallyRead == 0) {
                     // This case (expected data but read 0 bytes without error) should be rare with 
                     // event-driven reads. Just print a log and skip the event.
-                    Modbus::Debug::LOG_MSG("Warning: read no bytes from UART, expected " + std::to_string(toReadFromEvent));
+                    Modbus::Debug::LOG_MSGF("Warning: read no bytes from UART, expected %d", toReadFromEvent);
                 }
             }
 
             // If RX timeout occurred (event.timeout_flag is true), process the accumulated data as a frame
             if (event.timeout_flag) {
-                Modbus::Debug::LOG_MSG("Silence time detected by UART driver, processing RX buffer (" + std::to_string(_rxBuffer.size()) + " bytes)");
+                Modbus::Debug::LOG_MSGF("Silence time detected by UART driver, processing RX buffer (%zu bytes)", _rxBuffer.size());
                 if (_rxBuffer.size() > 0) {
                     processReceivedFrame(_rxBuffer);
                 }
@@ -448,7 +454,7 @@ RTU::Result RTU::handleUartEvent(const uart_event_t& event) {
             break;
         default:
             // This case should never happen, we just print a log and skip the event
-            Modbus::Debug::LOG_MSG("Unhandled UART event detected (type " + std::to_string(event.type) + ", size " + std::to_string(event.size) + ")");
+            Modbus::Debug::LOG_MSGF("Unhandled UART event detected (type %d, size %d)", event.type, event.size);
             return Error(ERR_RX_FAILED, "unhandled UART event");
     }
     return Success();
@@ -537,7 +543,7 @@ void RTU::rxTxTask(void* rtu) {
         if (!self->_isInitialized) { break; }
     } 
 
-    Modbus::Debug::LOG_MSG(std::string("Modbus RxTx Task stopping for UART port ") + std::to_string(self->_uartHAL.getPort()));
+    Modbus::Debug::LOG_MSGF("Modbus RxTx Task stopping for UART port %d", self->_uartHAL.getPort());
     self->_rxTxTaskHandle = nullptr; 
     vTaskDelete(NULL); 
 }

@@ -1,5 +1,5 @@
+#include <Arduino.h>
 #include <unity.h>
-#include <SafeLogSink.h>
 #include <EZModbus.h>
 #include "test_params.h"
 #include <utils/ModbusLogger.h>
@@ -8,7 +8,7 @@
 #ifdef EZMODBUS_DEBUG
     #define TEST_ASSERT_START() { Modbus::Logger::waitQueueFlushed(); }
 #else
-    #define TEST_ASSERT_START() { vTaskDelay(pdMS_TO_TICKS(5)); }
+    #define TEST_ASSERT_START() { vTaskDelay(pdMS_TO_TICKS(50)); }
 #endif
 
 // Pin definitions
@@ -141,6 +141,7 @@ void setUp() {
 }
 
 void tearDown() {
+    Serial.flush(); // Make sure all Unity logs are printed
 }
 
 // === Generation of read tests ===

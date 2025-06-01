@@ -46,3 +46,6 @@
 #define WRITE_TESTS \
     X(Coil,       writeCoil,            writeCoils,           WRITE_COIL_ADDR,    TEST_COIL_VALUE,    Modbus::WRITE_COIL,    Modbus::WRITE_MULTIPLE_COILS) \
     X(HoldingReg, writeHoldingRegister, writeHoldingRegisters, WRITE_HOLDING_ADDR, TEST_HOLDING_VALUE, Modbus::WRITE_REGISTER, Modbus::WRITE_MULTIPLE_REGISTERS) 
+
+
+    

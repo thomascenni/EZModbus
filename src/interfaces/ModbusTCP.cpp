@@ -124,8 +124,7 @@ TCP::Result TCP::begin() {
         return Error(ERR_INIT_FAILED, "failed to create poll task");
     }
     
-    Modbus::Debug::LOG_MSG(std::string("ModbusTCP Interface ready. Role: ") + 
-                          (_role == Modbus::CLIENT ? "CLIENT" : "SERVER"));
+    Modbus::Debug::LOG_MSGF("ModbusTCP Interface ready. Role: %s", (_role == Modbus::CLIENT ? "CLIENT" : "SERVER"));
     
     return Success();
 }
@@ -291,8 +290,7 @@ TCP::Result TCP::handleDecodedFrame(const Modbus::Frame& frame, int socketNum, u
             notifyCallbacks(frame);
             endTransaction();
 
-            Modbus::Debug::LOG_MSG(std::string("Client received response for TID: ") + std::to_string(transactionId) +
-                                   " on socket " + std::to_string(socketNum));
+            Modbus::Debug::LOG_MSGF("Client received response for TID: %d on socket %d", transactionId, socketNum);
             return Success();
         }
         
@@ -325,8 +323,7 @@ TCP::Result TCP::handleDecodedFrame(const Modbus::Frame& frame, int socketNum, u
             return Error(ERR_BUSY, "server already in transaction");
         }
 
-        Modbus::Debug::LOG_MSG(std::string("Server received request with MBAP_TID: ") + std::to_string(transactionId) +
-                               " from socket " + std::to_string(socketNum));
+        Modbus::Debug::LOG_MSGF("Server received request with MBAP_TID: %d from socket %d", transactionId, socketNum);
 
         notifyCallbacks(frame);
 
@@ -522,7 +519,7 @@ bool TCP::beginTransaction(int socketNum, uint16_t transactionId) {
     }
 
     _currentTransaction.set(socketNum, transactionId);
-    Modbus::Debug::LOG_MSG(std::string("Transaction started on socket: ") + std::to_string(socketNum) + " with TID: " + std::to_string(transactionId));
+    Modbus::Debug::LOG_MSGF("Transaction started on socket: %d with TID: %d", socketNum, transactionId);
     return true;
 }
 
@@ -531,7 +528,7 @@ bool TCP::beginTransaction(int socketNum, uint16_t transactionId) {
 void TCP::endTransaction() {
     Lock guard(_transactionMutex); // Wait for lock
     if (_currentTransaction.active) {
-        Modbus::Debug::LOG_MSG(std::string("Transaction ended on socket: ") + std::to_string(_currentTransaction.socketNum) + " with TID: " + std::to_string(_currentTransaction.tid));
+        Modbus::Debug::LOG_MSGF("Transaction ended on socket: %d with TID: %d", _currentTransaction.socketNum, _currentTransaction.tid);
         _currentTransaction.clear();
     } else {
         // Modbus::Debug::LOG_MSG("endTransaction called but not in transaction.");
@@ -585,7 +582,7 @@ void TCP::rxTxTask(void* tcp) {
         if (self->_currentTransaction.active) {
             uint32_t now = TIME_MS();
             if (now - self->_currentTransaction.startMs > TCP_TRANSACTION_TIMEOUT_MS) {
-                Modbus::Debug::LOG_MSG(std::string("Transaction timeout on socket ") + std::to_string(self->_currentTransaction.socketNum) + " TID: " + std::to_string(self->_currentTransaction.tid));
+                Modbus::Debug::LOG_MSGF("Transaction timeout on socket %d TID: %d", self->_currentTransaction.socketNum, self->_currentTransaction.tid);
                 self->endTransaction();
             }
         }
@@ -593,8 +590,7 @@ void TCP::rxTxTask(void* tcp) {
         if (!self->_isInitialized) { break; }
     }
 
-    Modbus::Debug::LOG_MSG(std::string("ModbusTCP RxTx Task stopping for ") + 
-                          (self->_role == Modbus::CLIENT ? "CLIENT" : "SERVER"));
+    Modbus::Debug::LOG_MSGF("ModbusTCP RxTx Task stopping for %s", (self->_role == Modbus::CLIENT ? "CLIENT" : "SERVER"));
     self->_rxTxTaskHandle = nullptr;
     vTaskDelete(nullptr);
 }

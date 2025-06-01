@@ -42,7 +42,7 @@ ModbusBridge bridge(rtuInterface, tcpInterface);
 void setup() {
     // Initialize serial for debug output
     Serial.begin(115200);
-    Serial.println("\nEZModbus Bridge Example");
+    Serial.println("EZModbus Bridge Example");
     
     // Initialize WiFi in Station mode
     WiFi.mode(WIFI_STA);
@@ -55,8 +55,7 @@ void setup() {
     }
     Serial.println();
     
-    Serial.print("Connected to WiFi, IP address: ");
-    Serial.println(WiFi.localIP());
+    Serial.printf("Connected to WiFi, IP address: %s\n", WiFi.localIP().toString().c_str());
     
     // Start UART & TCP server
     uart.begin();

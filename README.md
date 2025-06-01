@@ -8,8 +8,8 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
-    - [HAL Wrapper](#hal-wrapper)
-    - [Interfaces (Transport)](#interfaces-transport)
+    - [Drivers](#drivers)
+    - [Interfaces](#interfaces)
     - [Applications](#applications)
     - [Usage Examples](#usage-examples)
 - [Memory Management Approach](#memory-management-approach)
@@ -143,10 +143,9 @@ Modbus::Client          client(rtu);
 void setup() {
   Serial.begin(115200);  // Debug serial
 
-  // Initialize UART + RTU interface and client
+  // Initialize UART + Modbus Client
   // (launches tasks in the background)
   uart.begin();
-  rtu.begin();
   client.begin();
 
   Serial.println("✅ Modbus RTU client ready");
@@ -213,10 +212,9 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Starting Modbus Server...");
   
-  // Initialize UART + RTU interface and server
+  // Initialize UART + Modbus Server
   // (launches tasks in the background)
   uart.begin();
-  rtu.begin();
   server.begin();
   
   // Register our variables as Modbus registers
@@ -562,19 +560,15 @@ if (result != Modbus::Client::SUCCESS) {
 // If you reach here, the call to sendRequest has been successful
 ```
 
-#### Always Check Return Values!
+#### Always Check & Handle Return Values!
 
-It's **strongly recommended** to check the return value of every function call, including initialization functions like `begin()`. Some errors only become apparent at runtime, and failing to check for these can lead to subtle bugs.
+It's **strongly recommended** to check the return value of every function call, including `begin()` initialization functions. Some errors only become apparent at runtime, and failing to check for these can lead to subtle bugs.
 
 ```cpp
-// Always check initialization results
-if (rtuIface.begin() != ModbusInterface::SUCCESS) {
-    Serial.println("Failed to initialize RTU interface");
-    while (1) { delay(1000) }; // Halt
-}
-
-if (client.begin() != Modbus::Client::SUCCESS) {
-    Serial.println("Failed to initialize Modbus client");
+// Error check & error message printing at initialization
+auto clientInitRes = client.begin();
+if (clientInitRes != Modbus::Client::SUCCESS) {
+    Serial.printf("Failed to initialize Modbus client: %s\n", Modbus::Client::toString(clientInitRes));
     while (1) { delay(1000) }; // Halt
 }
 ```
@@ -616,15 +610,15 @@ Historically, Modbus RTU systems used traditional `MASTER` / `SLAVE` semantics w
 
 ## Usage
 
-### Hardware Abstraction Layer (HAL) wrapper
+### Drivers
 
-EZModbus introduces an HAL wrapper that separates physical peripheral management from Modbus protocol logic. This design provides framework independence, event-driven responsiveness, and user control over hardware interfaces. 
+EZModbus introduces HAL (Hardware Abstraction Layer) wrappers that act as UART & TCP drivers separating physical peripheral management from Modbus protocol logic. This design provides framework independence, event-driven responsiveness, and user control over hardware interfaces. 
 
 #### Design Philosophy
 
 **Framework Independence**
 - Works natively with ESP-IDF without Arduino dependencies
-- Full backward compatibility with Arduino Serial objects
+- Full backward compatibility with Arduino Serial objects (UART)
 - Extensible architecture for future platform support
 
 **Event-Driven Approach**
@@ -637,23 +631,23 @@ EZModbus introduces an HAL wrapper that separates physical peripheral management
 - No hidden peripheral initialization
 - Transparent configuration and error handling
 
-#### HAL Components
+#### Components
 
-**ModbusHAL::UART** - UART/RS485 interface management
+**ModbusHAL::UART** - UART/RS485 driver
 - Encapsulates UART driver configuration and RS485 direction control
 - Compatible with both Arduino `HardwareSerial` objects and native ESP-IDF
 - Automatic 3.5T silence detection and DE/RE timing with built-in ESP UART API
 
-**ModbusHAL::TCP** - TCP socket management  
+**ModbusHAL::TCP** - TCP socket driver
 - Native ESP-IDF socket handling with event-driven architecture
 - Automatic connection management and reconnection logic
 - Support for both client and server modes
 
 #### Usage Pattern
 
-The HAL wrapper replaces manual peripheral initialization:
+The drivers replace manual peripheral initialization:
 
-##### RS485 UART - Traditional approach (Arduino style)
+##### UART/RS485 - Traditional approach (Arduino style)
 
 ```cpp
 // Serial parameters
@@ -673,7 +667,7 @@ Serial2.begin(RS485_BAUD_RATE, RS485_CONFIG, RS485_RX_PIN, RS485_TX_PIN);
 pinMode(RS485_DE_PIN, OUTPUT);
 ```
 
-##### RS485 UART - Modbus HAL approach (Arduino API)
+##### UART/RS485 - EZModbus approach (Arduino API)
 
 ```cpp
 // UART parameters
@@ -702,7 +696,7 @@ ModbusHAL::UART uart(RS485_SERIAL, RS485_BAUD_RATE, RS485_CONFIG,
 uart.begin(); // Handles all UART and RS-485 configuration
 ```
 
-##### RS485 UART - Modbus HAL approach (ESP-IDF API)
+##### UART/RS485 - EZModbus approach (ESP-IDF API)
 
 ```cpp
 // UART parameters
@@ -749,7 +743,7 @@ EthernetClient tcpClient;
 tcpClient.connect(TCP_CLIENT_IP, TCP_CLIENT_PORT);
 ```
 
-##### TCP - Modbus HAL approach (Arduino & ESP-IDF, same API)
+##### TCP - EZModbus approach (Arduino & ESP-IDF, same API)
 
 ```cpp
 // Parameters
@@ -776,9 +770,11 @@ ModbusInterface::TCP tcp(tcpClient, Modbus::CLIENT);
 
 This separation ensures you maintain control over hardware while benefiting from optimized, event-driven peripheral management designed specifically for Modbus communication requirements.
 
-### Interfaces (Transport)
+**Note:** The driver must be properly initialized with `begin()` **before** the other Modbus components! Otherwise you will get an `ERR_INIT_FAILED` error when trying to initialize the Modbus application layer.
 
-The transport layer handles physical communication details:
+### Interfaces
+
+The interface layer handles physical communication details for Modbus RTU & TCP protocols. They don't need to be initialized separately, they are automatically initialized when calling `begin()` on the application layer instances (Client, Server & Bridge).
 
 #### RTU Interface
 
@@ -787,14 +783,13 @@ The transport layer handles physical communication details:
 // - ModbusHAL::UART - The UART port to use
 // - Modbus::Role - CLIENT (master) or SERVER (slave)  
 ModbusInterface::RTU rtuIface(uart, Modbus::CLIENT);
+```
+For Modbus RTU, the silence time used to detect the end of a frame (& observed after sending a frame) is automatically calculated based on the UART baud rate used to setup the UART driver. However, many third-party devices poorly implement Modbus timing specifications and might require a manual override. This is possible with the following method:
 
-// Optional configuration
-rtuIface.setSilenceTimeBaud(9600);  // Auto-calculate silence period (3.5T + 200 µs margin)
-// or
-rtuIface.setSilenceTimeMs(4);       // Manually set silence period (min. 1 ms)
-
-// Initialize (launches TX and RX tasks)
-rtuIface.begin();
+```cpp
+// Optional configuration - the default silence time (based on UART baud rate) can be overridden
+// (may be done before or after initializing the application layer)
+rtuIface.setSilenceTimeMs(5);  // Manually set silence period - 5~10 ms generally work fine with all devices
 ```
 
 #### TCP Interface
@@ -802,11 +797,8 @@ rtuIface.begin();
 ```cpp
 // Constructor parameters:
 // - ModbusHAL::TCP - The TCP client/server to use
-// - Modbus::Role - CLIENT (master) or SERVER (slave)  
+// - Modbus::Role - CLIENT (master) or SERVER (slave)
 ModbusInterface::TCP tcpIface(tcpClient, Modbus::CLIENT);
-
-// Initialize (launches TX & RX tasks)
-tcpIface.begin();
 ```
 If you pass the wrong TCP HAL object type (for example a `tcpServer` for a Modbus TCP client), the `begin()` method will return an `ERR_INIT_FAILED` error.
 
@@ -1183,7 +1175,6 @@ Modbus::Server controlServer(rtuIface, 3);      // Responds to Slave ID 3
 
 // Initialize everything
 uart.begin();
-rtuIface.begin();
 temperatureServer.begin();
 humidityServer.begin();
 controlServer.begin();
@@ -1218,7 +1209,6 @@ Modbus::Client controlClient(rtuIface);
 
 // Initialize everything
 uart.begin();
-rtuIface.begin();
 temperatureClient.begin();
 controlClient.begin();
 ```
@@ -1254,12 +1244,15 @@ ModbusHAL::UART uart2(Serial2, 115200, SERIAL_8E2);
 ModbusInterface::RTU rtuIface1(uart1, Modbus::CLIENT);
 ModbusInterface::RTU rtuIface2(uart2, Modbus::SERVER, 5); 
 
-// Initialize all UARTs & interfaces separately
+// Create Modbus Client & Server instances
+Modbus::Client client(rtuIface1);
+Modbus::Server server(rtuIface2);
+
+// Initialize UARTs & Modbus client/server instances separately
 uart1.begin();
 uart2.begin();
-rtuIface1.begin();
-rtuIface2.begin();
-// ...etc.
+client.begin();
+server.begin();
 ```
 
 This approach gives you complete flexibility to connect your ESP32 to multiple Modbus networks simultaneously, with each interface operating independently.

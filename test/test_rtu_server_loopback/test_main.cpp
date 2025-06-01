@@ -1,10 +1,9 @@
 #include <Arduino.h>
 #include <unity.h>
 #include <EZModbus.h>
-#include "SafeLogSink.h"
 #include "test_helpers.h"
-#include <ModbusTestAgent.h>
-#include <ModbusTestClient.h>
+#include "ModbusTestAgent.h"
+#include "ModbusTestClient.h"
 #include <utils/ModbusLogger.h>
 
 // Pin definitions
@@ -18,8 +17,7 @@
 #define MBT_SERIAL Serial2
 
 // Create our test agent and client
-SafeLogStream _agentLogStream;
-ModbusTestAgent agent(MBT_SERIAL, 20000, &_agentLogStream);
+ModbusTestAgent agent(MBT_SERIAL, 20000);
 ModbusTestClient testClient(agent); 
 
 #define HOLDING_REGISTERS 3
@@ -72,6 +70,7 @@ void setUp() {
 
 void tearDown() {
     server.clearAllRegisters();
+    Serial.flush(); // Make sure all Unity logs are printed
 }
 
 // ===================================================================================

@@ -21,7 +21,6 @@ public:
     // CONSTANTS
     // ===================================================================================
 
-    static constexpr uint32_t DEFAULT_SILENCE_TIME_US = 5000; 
     static constexpr uint32_t RXTX_QUEUE_CHECK_TIMEOUT_MS = 100;
 
     // Tasks stack sizes (higher for debug to let room for the printf/hexdump buffers)
@@ -62,7 +61,7 @@ public:
                 endUs = TIME_US();
             }
             uint64_t deltaUs = (endUs - startUs);
-            Modbus::Debug::LOG_MSG(std::string("RTT: ") + std::to_string(deltaUs) + " us");
+            Modbus::Debug::LOG_MSGF("RTT: %d us", deltaUs);
         }
     #else // Do not use the RTT if debug is disabled
         void start(uint64_t* storeUs = nullptr) {}
@@ -80,7 +79,7 @@ public:
 
     Result begin() override;
     Result setSilenceTimeMs(uint32_t silenceTimeMs);
-    Result setSilenceTimeBaud(uint32_t baudRate); 
+    Result setSilenceTimeBaud(); 
     Result sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask = nullptr) override;
     bool isReady() override;
     TaskHandle_t getRxTxTaskHandle();
@@ -92,7 +91,7 @@ private:
 
     // Serial communication
     ModbusHAL::UART& _uartHAL;
-    uint64_t _silenceTimeUs;   // Sets the silence time to observe between consecutive frames (RX + TX)
+    uint64_t _silenceTimeUs = 0;   // Sets the silence time to observe between consecutive frames (RX + TX)
     uint64_t _lastTxTimeUs; // Last time a frame was sent (used to enforce the silence time for TX)
     bool _isInitialized = false;
 

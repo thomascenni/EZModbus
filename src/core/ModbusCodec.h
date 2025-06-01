@@ -5,8 +5,9 @@
 
 #pragma once
 
+#include "core/ModbusCore.h"
+
 #ifndef NATIVE_TEST // Do NOT include additional headers for native tests (standalone compilation)
-    #include "core/ModbusCore.h"
     #include "utils/ModbusDebug.h"
 #endif
 
@@ -60,9 +61,7 @@ namespace ModbusCodec {
      */
     static inline Result Error(Result res, const char* desc = nullptr
                         #ifdef EZMODBUS_DEBUG
-                        , const char* fileName = __builtin_FILE()
-                        , const char* funcName = __builtin_FUNCTION() 
-                        , int lineNo = __builtin_LINE()
+                        , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                         #endif
                         ) {
         #ifdef EZMODBUS_DEBUG
@@ -70,7 +69,7 @@ namespace ModbusCodec {
             if (desc && *desc != '\0') {
                 logMessage += std::string(" (") + desc + ")";
             }
-            Modbus::Debug::LOG_MSG(logMessage, fileName, funcName, lineNo);
+            Modbus::Debug::LOG_MSG(logMessage, ctx);
         #endif
         return res;
     }
@@ -83,15 +82,13 @@ namespace ModbusCodec {
      */
     static inline Result Success(const char* desc = nullptr
                           #ifdef EZMODBUS_DEBUG
-                          , const char* fileName = __builtin_FILE()
-                          , const char* funcName = __builtin_FUNCTION() 
-                          , int lineNo = __builtin_LINE()
+                          , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                           #endif
                           ) {
         #ifdef EZMODBUS_DEBUG
             if (desc && *desc != '\0') {
                 std::string logMessage = std::string("Success: ") + desc;
-                Modbus::Debug::LOG_MSG(logMessage, fileName, funcName, lineNo);
+                Modbus::Debug::LOG_MSG(logMessage, ctx);
             }
         #endif
         return SUCCESS;
@@ -620,12 +617,10 @@ class PDU {
     // Template function to clear an object + cast an error (for appendToBytes & setFromBytes)
     template<typename T>
     static Result HandleError(T& objectToClear, Result errorCode, const char* desc = nullptr,
-                    const char* fileName = __builtin_FILE(),
-                    const char* funcName = __builtin_FUNCTION(), 
-                    int lineNo = __builtin_LINE()) {
+                    Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()) {
         objectToClear.clear();
         #ifdef EZMODBUS_DEBUG
-            return Error(errorCode, desc, fileName, funcName, lineNo);
+            return Error(errorCode, desc, ctx);
         #else
             return Error(errorCode, desc);
         #endif

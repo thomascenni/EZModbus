@@ -1,5 +1,4 @@
 #include <unity.h>
-#include <SafeLogSink.h>
 #include <EZModbus.h>
 #include "test_params.h"
 #include "dummy_interface.h"
@@ -10,7 +9,7 @@
 #ifdef EZMODBUS_DEBUG
     #define TEST_ASSERT_START() { Modbus::Logger::waitQueueFlushed(); }
 #else
-    #define TEST_ASSERT_START() { vTaskDelay(pdMS_TO_TICKS(5)); }
+    #define TEST_ASSERT_START() { vTaskDelay(pdMS_TO_TICKS(50)); }
 #endif
 
 // WiFi configuration
@@ -263,7 +262,7 @@ void setUp() {
 }
 
 void tearDown() {
-    Serial.flush(); // Make sure all log messages are printed
+    Serial.flush(); // Make sure all Unity logs are printed
 }
 
 void setup() {

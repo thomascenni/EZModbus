@@ -39,6 +39,7 @@ public:
         ERR_TX_FAILED,
         ERR_TIMEOUT,
         ERR_INVALID_RESPONSE,
+        ERR_NOT_INITIALIZED,
         ERR_INIT_FAILED
     };
     static constexpr const char* toString(const Result result) {
@@ -50,6 +51,7 @@ public:
             case ERR_TX_FAILED: return "tx failed";
             case ERR_TIMEOUT: return "timeout";
             case ERR_INVALID_RESPONSE: return "invalid response";
+            case ERR_NOT_INITIALIZED: return "client not initialized";
             case ERR_INIT_FAILED: return "init failed";
             default: return "unknown result";
         }
@@ -63,9 +65,7 @@ public:
      */
     static inline Result Error(Result res, const char* desc = nullptr
                         #ifdef EZMODBUS_DEBUG
-                        , const char* fileName = __builtin_FILE()
-                        , const char* funcName = __builtin_FUNCTION() 
-                        , int lineNo = __builtin_LINE()
+                        , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                         #endif
                         ) {
         #ifdef EZMODBUS_DEBUG
@@ -73,7 +73,7 @@ public:
             if (desc && *desc != '\0') {
                 logMessage += std::string(" (") + desc + ")";
             }
-            Modbus::Debug::LOG_MSG(logMessage, fileName, funcName, lineNo);
+            Modbus::Debug::LOG_MSG(logMessage, ctx);
         #endif
         return res;
     }
@@ -86,15 +86,13 @@ public:
      */
     static inline Result Success(const char* desc = nullptr
                           #ifdef EZMODBUS_DEBUG
-                          , const char* fileName = __builtin_FILE()
-                          , const char* funcName = __builtin_FUNCTION() 
-                          , int lineNo = __builtin_LINE()
+                          , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                           #endif
                           ) {
         #ifdef EZMODBUS_DEBUG
             if (desc && *desc != '\0') {
                 std::string logMessage = std::string("Success: ") + desc;
-                Modbus::Debug::LOG_MSG(logMessage, fileName, funcName, lineNo);
+                Modbus::Debug::LOG_MSG(logMessage, ctx);
             }
         #endif
         return SUCCESS;
@@ -105,6 +103,7 @@ public:
     // ===================================================================================
 
     Client(ModbusInterface::IInterface& interface, uint32_t timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS);
+    ~Client();
 
     Result begin();
     Result sendRequest(const Modbus::Frame& request, 
@@ -151,6 +150,7 @@ private:
     uint32_t _requestTimeoutMs;
     PendingRequest _pendingRequest;
     Modbus::Frame _responseBuffer;
+    bool _isInitialized = false;
 
     // ===================================================================================
     // PRIVATE METHODS

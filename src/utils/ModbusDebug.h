@@ -7,12 +7,30 @@
 
 #include "core/ModbusCore.h"
 
+namespace Modbus {
+namespace Debug {
+
+/* @brief Context structure to capture call location information
+ */
+struct CallCtx {
+    const char* file;
+    const char* function;
+    int line;
+    
+    CallCtx(const char* f = __builtin_FILE(), 
+            const char* func = __builtin_FUNCTION(), 
+            int l = __builtin_LINE()) 
+        : file(f), function(func), line(l) {}
+};
+
+} // namespace Debug
+} // namespace Modbus
+
 #ifdef EZMODBUS_DEBUG
 
 #include "utils/ModbusLogger.h"
 
 namespace Modbus {
-
 namespace Debug {
 
 /* @brief Utility function to extract the filename from a full path
@@ -33,21 +51,37 @@ static const char* getBasename(const char* path) {
     return basename;
 }
 
-inline void LOG_MSG(const std::string& message = "", 
-             const char* fileName = __builtin_FILE(),
-             const char* functionName = __builtin_FUNCTION(), 
-             int lineNumber = __builtin_LINE(),
-             const char* prefix = nullptr) {
-    if (prefix) Modbus::Logger::logf("%s [%s::%s:%d] %s\n", prefix, getBasename(fileName), functionName, lineNumber, message.c_str());
-    else Modbus::Logger::logf("[%s::%s:%d] %s\n", getBasename(fileName), functionName, lineNumber, message.c_str());
+/* @brief Format and log a debug message with printf-style formatting
+ * @param ctx Call context (file, function, line)
+ * @param format Printf-style format string
+ * @param args Arguments for the format string
+ */
+template<typename... Args>
+inline void LOG_MSGF_impl(CallCtx ctx, const char* format, Args&&... args) {
+    // Calculate needed buffer size
+    int needed = snprintf(nullptr, 0, format, args...);
+    if (needed <= 0) return;
+    
+    // Allocate and format the message
+    std::vector<char> buffer(needed + 1);
+    snprintf(buffer.data(), buffer.size(), format, std::forward<Args>(args)...);
+    
+    // Log with context information (Logger::logf handles newline normalization)
+    Modbus::Logger::logf("[%s::%s:%d] %s", 
+                        getBasename(ctx.file), ctx.function, ctx.line,
+                        buffer.data());
 }
 
-inline void LOG_HEXDUMP(const ByteBuffer& bytes, const char* desc,
-                        const char* fileName = __builtin_FILE(),
-                        const char* functionName = __builtin_FUNCTION(), 
-                        int lineNumber = __builtin_LINE()) {
+// Macro to automatically capture call context
+#define LOG_MSGF(format, ...) LOG_MSGF_impl(Modbus::Debug::CallCtx(), format, ##__VA_ARGS__)
+
+inline void LOG_MSG(const std::string& message = "", CallCtx ctx = CallCtx()) {
+    Modbus::Logger::logf("[%s::%s:%d] %s\n", getBasename(ctx.file), ctx.function, ctx.line, message.c_str());
+}
+
+inline void LOG_HEXDUMP(const ByteBuffer& bytes, const char* desc, CallCtx ctx = CallCtx()) {
     if (bytes.empty()) {
-        Modbus::Logger::logf("[%s::%s:%d] %s<empty>\n", getBasename(fileName), functionName, lineNumber, desc);
+        Modbus::Logger::logf("[%s::%s:%d] %s<empty>\n", getBasename(ctx.file), ctx.function, ctx.line, desc);
         return;
     }
 
@@ -80,16 +114,12 @@ inline void LOG_HEXDUMP(const ByteBuffer& bytes, const char* desc,
     }
 
     // 5) Only one logf call for everything
-    Modbus::Logger::logf("[%s::%s:%d] %s", getBasename(fileName), functionName, lineNumber, buffer.data());
+    Modbus::Logger::logf("[%s::%s:%d] %s", getBasename(ctx.file), ctx.function, ctx.line, buffer.data());
 }
 
-inline void LOG_FRAME(const Modbus::Frame& frame,
-                     const char* desc = nullptr,
-                     const char* fileName = __builtin_FILE(),
-                     const char* functionName = __builtin_FUNCTION(), 
-                     int lineNumber = __builtin_LINE()) {
+inline void LOG_FRAME(const Modbus::Frame& frame, const char* desc = nullptr, CallCtx ctx = CallCtx()) {
     // Log header with file/function/line information
-    Modbus::Logger::logf("[%s::%s:%d] %s:\n", getBasename(fileName), functionName, lineNumber, desc);
+    Modbus::Logger::logf("[%s::%s:%d] %s:\n", getBasename(ctx.file), ctx.function, ctx.line, desc);
     
     // Body
     Modbus::Logger::logf("> Type           : %s\n", frame.type == Modbus::REQUEST ? "REQUEST" : "RESPONSE");
@@ -117,7 +147,6 @@ inline void LOG_FRAME(const Modbus::Frame& frame,
 }
 
 } // namespace Debug
-
 } // namespace Modbus
 
 
@@ -125,7 +154,6 @@ inline void LOG_FRAME(const Modbus::Frame& frame,
 
 
 namespace Modbus {
-
 namespace Debug {
 
     // If EZMODBUS_DEBUG is not defined, use no-op templates to totally
@@ -140,8 +168,10 @@ namespace Debug {
     template<typename... Args>
     inline void LOG_FRAME(Args&&...) {}
 
-} // namespace Debug
+    template<typename... Args>
+    inline void LOG_MSGF(Args&&...) {}
 
+} // namespace Debug
 } // namespace Modbus
 
 

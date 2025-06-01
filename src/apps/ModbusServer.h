@@ -43,6 +43,7 @@ public:
         ERR_RCV_ILLEGAL_DATA_VALUE,
         ERR_RCV_SLAVE_DEVICE_FAILURE,
         ERR_RSP_TX_FAILED,
+        ERR_NOT_INITIALIZED,
         ERR_INIT_FAILED
     };
     static const char* toString(const Result res) {
@@ -63,30 +64,27 @@ public:
             case ERR_RCV_ILLEGAL_DATA_VALUE: return "illegal data value";
             case ERR_RCV_SLAVE_DEVICE_FAILURE: return "slave device failure";
             case ERR_RSP_TX_FAILED: return "transmit failed";
+            case ERR_NOT_INITIALIZED: return "server not initialized";
             case ERR_INIT_FAILED: return "init failed";
             default: return "unknown error";
         }
     }
 
     static inline Result Error(Result res, const char* desc = nullptr, 
-                const char* fileName = __builtin_FILE(),
-                const char* funcName = __builtin_FUNCTION(), 
-                int lineNo = __builtin_LINE()) {
+                Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()) {
         std::string logMessage = std::string("Error: ") + toString(res);
         if (desc && *desc != '\0') {
             logMessage += std::string(" (") + desc + ")";
         }
-        Modbus::Debug::LOG_MSG(logMessage, fileName, funcName, lineNo);
+        Modbus::Debug::LOG_MSG(logMessage, ctx);
         return res;
     }
 
     static inline Result Success(const char* desc = nullptr,
-                  const char* fileName = __builtin_FILE(),
-                  const char* funcName = __builtin_FUNCTION(), 
-                  int lineNo = __builtin_LINE()) {
+                  Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()) {
         if (desc && *desc != '\0') {
             std::string logMessage = std::string("Success: ") + desc;
-            Modbus::Debug::LOG_MSG(logMessage, fileName, funcName, lineNo);
+            Modbus::Debug::LOG_MSG(logMessage, ctx);
         }
         return SUCCESS;
     }
@@ -132,6 +130,7 @@ public:
     // ===================================================================================
 
     Server(ModbusInterface::IInterface& interface, uint8_t slaveId = 1, bool rejectUndefined = true);
+    ~Server();
 
     Result begin();
     Result setRegisterCount(const Modbus::RegisterType type, const uint16_t count);
@@ -176,6 +175,7 @@ private:
     ModbusInterface::IInterface& _interface;
     uint8_t _serverId;
     bool _rejectUndefined; // If false, undefined registers will be silently ignored (no exception returned)
+    bool _isInitialized = false;
     
     // Mutex protection
     Mutex _handleRequestMutex;

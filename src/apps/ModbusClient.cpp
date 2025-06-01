@@ -86,16 +86,36 @@ void Client::PendingRequest::setResponse(const Modbus::Frame& response) {
 Client::Client(ModbusInterface::IInterface& interface, uint32_t timeoutMs) : 
     _interface(interface),
     _pendingRequest(),
-    _requestTimeoutMs(timeoutMs)
+    _requestTimeoutMs(timeoutMs),
+    _isInitialized(false)
 {}
+
+Client::~Client() {
+    if (_isInitialized && _cleanupTaskHandle != nullptr) {
+        // Kill the cleanup task
+        vTaskDelete(_cleanupTaskHandle);
+        _cleanupTaskHandle = nullptr;
+    }
+    
+    // Cleanup any active pending request
+    _pendingRequest.clear();
+    _isInitialized = false;
+}
+
 
 /* @brief Initialize the client & launch the pollPendingRequest task
  * @return Success if the client was initialized successfully
  * @note Launches the pollPendingRequest task in a dedicated thread
  */
 Client::Result Client::begin() {
+    if (_isInitialized) return Success();
+
     if (_interface.getRole() != Modbus::CLIENT) {
         return Error(ERR_INIT_FAILED, "interface must be CLIENT");
+    }
+
+    if (_interface.begin() != ModbusInterface::IInterface::SUCCESS) {
+        return Error(ERR_INIT_FAILED, "interface init failed");
     }
 
     ModbusInterface::RcvCallback rcvCb = [this](const Modbus::Frame& frame) {
@@ -117,6 +137,7 @@ Client::Result Client::begin() {
         /*xCoreID*/         0
     );
 
+    _isInitialized = true;
     return Success();
 }
 
@@ -124,6 +145,7 @@ Client::Result Client::begin() {
  * @return true if interface ready & no active pending request
  */
 bool Client::isReady() {
+    if (!_isInitialized) return false;
     return (_interface.isReady() && !_pendingRequest.isActive());
 }
 
@@ -284,7 +306,7 @@ void Client::cleanupRequestsTask(void* client) {
         if (self->_pendingRequest.isActive() && timeElapsed > self->_requestTimeoutMs) {
             self->_pendingRequest.setResult(ERR_TIMEOUT);
             self->_pendingRequest.clear();
-            Modbus::Debug::LOG_MSG(std::string("Pending request timed out after ") + std::to_string(timeElapsed) + " ms");
+            Modbus::Debug::LOG_MSGF("Pending request timed out after %d ms", timeElapsed);
         }
 
         vTaskDelay(pdMS_TO_TICKS(1));

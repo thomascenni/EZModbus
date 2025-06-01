@@ -115,8 +115,29 @@ public:
         char buffer[MAX_MSG_SIZE];
         va_list args;
         va_start(args, format);
-        vsnprintf(buffer, sizeof(buffer), format, args);
+        int len = vsnprintf(buffer, sizeof(buffer), format, args);
         va_end(args);
+        
+        // Ensure we don't exceed buffer bounds
+        if (len >= MAX_MSG_SIZE) {
+            len = MAX_MSG_SIZE - 1;
+            buffer[len] = '\0';
+        }
+        
+        // Strip any trailing newlines to ensure consistent formatting
+        char* end = buffer + len - 1;
+        while (end >= buffer && (*end == '\n' || *end == '\r')) {
+            *end = '\0';
+            end--;
+            len--;
+        }
+        
+        // Add exactly one newline at the end
+        if (len < MAX_MSG_SIZE - 2) { // Leave space for \n and \0
+            buffer[len] = '\n';
+            buffer[len + 1] = '\0';
+        }
+        
         sendToQueue(buffer);
     }
     

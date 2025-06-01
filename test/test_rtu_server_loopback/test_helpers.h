@@ -10,7 +10,7 @@
 #ifdef EZMODBUS_DEBUG
     #define TEST_ASSERT_START() { Modbus::Logger::waitQueueFlushed(); }
 #else
-    #define TEST_ASSERT_START() { vTaskDelay(pdMS_TO_TICKS(5)); }
+    #define TEST_ASSERT_START() { vTaskDelay(pdMS_TO_TICKS(50)); }
 #endif
 
 // Pour simplifier les noms

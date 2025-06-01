@@ -19,6 +19,11 @@ Server::Server(ModbusInterface::IInterface& interface, uint8_t slaveId, bool rej
     _inputRegisterStore.reserve(RSV_REGISTERS);
     _holdingRegisterStore.reserve(RSV_REGISTERS);
     _cbStore.reserve(RSV_REGISTERS);
+    _isInitialized = false;
+}
+
+Server::~Server() {
+    _isInitialized = false;
 }
 
 /* @brief Initialize the server
@@ -26,8 +31,14 @@ Server::Server(ModbusInterface::IInterface& interface, uint8_t slaveId, bool rej
  * @note The server is fed by interface callbacks, no polling required
  */
 Server::Result Server::begin() {
+    if (_isInitialized) return Success();
+
     if (_interface.getRole() != Modbus::SERVER) {
         return Error(Server::ERR_INIT_FAILED, "interface must be SERVER");
+    }
+
+    if (_interface.begin() != ModbusInterface::IInterface::SUCCESS) {
+        return Error(Server::ERR_INIT_FAILED, "interface init failed");
     }
 
     ModbusInterface::RcvCallback rcvCb = [this](const Modbus::Frame& frame) {
@@ -40,6 +51,7 @@ Server::Result Server::begin() {
         return Error(Server::ERR_INIT_FAILED, "cannot set receive callback on interface");
     }
 
+    _isInitialized = true;
     return Success();
 }
 
@@ -171,6 +183,7 @@ void Server::poll() {
  * @return true if the server is busy (adding a register or processing a request)
  */
 bool Server::isBusy() {
+    if (!_isInitialized) return true;
     Lock l1(_handleRequestMutex, 0);
     Lock l2(_registerStoreMutex,     0);
     return !l1.isLocked() || !l2.isLocked();   // busy si au moins un est pris ailleurs

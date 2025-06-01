@@ -2,15 +2,7 @@
 #include <iostream>
 #include <string>
 
-// Neutralize timing functions macros in ModbusCore.h before including it
-#define TIME_MS() (0)
-#define TIME_US() (0)
-#define WAIT_MS(x) ((void)0)
-#define WAIT_US(x) ((void)0)
-#define YIELD() ((void)0)
-
-#include <core/ModbusCore.h>
-#include <core/ModbusCodec.h>
+#include "core/ModbusCodec.h"
 
 // Helper function to compare two Modbus frames
 bool compareFrames(const Modbus::Frame& f1, const Modbus::Frame& f2) {

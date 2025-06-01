@@ -21,7 +21,6 @@
 #include "semphr.h"
 #include "esp_timer.h"
 #include "freertos/portmacro.h"
-#include "esp_log.h"
 
 // ===================================================================================
 // TIMING MACROS

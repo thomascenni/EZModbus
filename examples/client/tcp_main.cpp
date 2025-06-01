@@ -48,7 +48,7 @@ ModbusTCP interface(tcpClient, Modbus::CLIENT);
 ModbusClient client(interface);
 
 // Function prototypes
-void readTemperatureHumidity_Sync();
+void readTemperature_Sync();
 void readAlarms_Async();
 void readSetpoints_Sync();
 void writeSetpoints_Async();
@@ -73,17 +73,12 @@ void setup() {
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
 
-    // Initialize TCP client
+    // Initialize TCP driver
     tcpClient.begin();
     
-    // Initialize Modbus TCP interface and client
-    if (interface.begin() != ModbusTCP::SUCCESS) {
-        Serial.println("Failed to initialize Modbus interface");
-        while (1) { delay(1000); } // Halt
-    }
-    
+    // Initialize Modbus TCP Client 
     if (client.begin() != ModbusClient::SUCCESS) {
-        Serial.println("Failed to initialize Modbus client");
+        Serial.println("Failed to initialize Modbus Client");
         while (1) { delay(1000); } // Halt
     }
     
@@ -107,7 +102,7 @@ void loop() {
     
     // Example 1: Synchronous read
     Serial.println("\n****** EXAMPLE 1: Synchronous Read ******");
-    readTemperatureHumidity_Sync();
+    readTemperature_Sync();
     delay(3000);
     
     // Example 2: Asynchronous read
@@ -137,7 +132,7 @@ void loop() {
 /**
  * Example 1: Synchronous read of current temperature and humidity
  */
-void readTemperatureHumidity_Sync() {
+void readTemperature_Sync() {
     Serial.println("Reading current temperature and humidity...");
     
     // Create frame to read temperature (input register)
@@ -155,50 +150,21 @@ void readTemperatureHumidity_Sync() {
     Modbus::Frame tempResponse;
     auto result = client.sendRequest(tempRequest, tempResponse);
     
-    if (result == ModbusClient::SUCCESS) {
-        if (tempResponse.exceptionCode != Modbus::NULL_EXCEPTION) {
-            Serial.print("Modbus exception reading temperature: ");
-            Serial.println(Modbus::toString(tempResponse.exceptionCode));
-        } else if (!tempResponse.data.empty()) {
-            float tempValue = tempResponse.getRegister(0) / 10.0f;
-            Serial.print("Temperature: ");
-            Serial.print(tempValue);
-            Serial.println("°C");
-        }
-    } else {
-        Serial.print("Error reading temperature: ");
-        Serial.println(ModbusClient::toString(result));
+    // Check if the request was successful
+    if (result != ModbusClient::SUCCESS) {
+        Serial.printf("Failed to read temperature: %s\n", ModbusClient::toString(result));
+        return;
     }
-    
-    // Create frame to read humidity (input register)
-    Modbus::Frame humRequest = {
-        .type = Modbus::REQUEST,
-        .fc = Modbus::READ_INPUT_REGISTERS,
-        .slaveId = THERMOSTAT_SLAVE_ID,
-        .regAddress = REG_CURRENT_HUMIDITY,
-        .regCount = 1,
-        .data = {}
-    };
-    
-    // Send request and wait for response
-    // (tracker not provided -> blocks until response received or timeout)
-    Modbus::Frame humResponse;
-    result = client.sendRequest(humRequest, humResponse);
-    
-    if (result == ModbusClient::SUCCESS) {
-        if (humResponse.exceptionCode != Modbus::NULL_EXCEPTION) {
-            Serial.print("Modbus exception reading humidity: ");
-            Serial.println(Modbus::toString(humResponse.exceptionCode));
-        } else if (!humResponse.data.empty()) {
-            float humValue = humResponse.getRegister(0) / 10.0f;
-            Serial.print("Humidity: ");
-            Serial.print(humValue);
-            Serial.println("%");
-        }
-    } else {
-        Serial.print("Error reading humidity: ");
-        Serial.println(ModbusClient::toString(result));
+
+    // Check if the response has an exception
+    if (tempResponse.exceptionCode != Modbus::NULL_EXCEPTION) {
+        Serial.printf("Modbus exception reading temperature: %s\n", Modbus::toString(tempResponse.exceptionCode));
+        return;
     }
+
+    // Get the temperature value from the response
+    float tempValue = tempResponse.getRegister(0) / 10.0f;
+    Serial.printf("Temperature: %.1f°C\n", tempValue);
 }
 
 /**
@@ -226,8 +192,7 @@ void readAlarms_Async() {
     auto result = client.sendRequest(request, response, &tracker);
     
     if (result != ModbusClient::SUCCESS) {
-        Serial.print("Failed to start alarm read: ");
-        Serial.println(ModbusClient::toString(result));
+        Serial.printf("Failed to start alarm read: %s\n", ModbusClient::toString(result));
         return;
     }
     
@@ -237,32 +202,30 @@ void readAlarms_Async() {
     // (usually this is done in another task/function)
     uint32_t startTime = millis();
     while (tracker == ModbusClient::NODATA) {
-        // Timeout after 2 seconds
+        // Timeout after 2 seconds (safety, should be already handled by the ModbusClient)
         if (millis() - startTime > 2000) {
             Serial.println("Waiting for response timed out");
             return;
         }
-        delay(10);
+        delay(1);
     }
     
-    if (tracker == ModbusClient::SUCCESS) {
-        if (response.exceptionCode != Modbus::NULL_EXCEPTION) {
-            Serial.print("Modbus exception reading alarms: ");
-            Serial.println(Modbus::toString(response.exceptionCode));
-            return;
-        }
+    // Check if the request was successful
+    if (tracker != ModbusClient::SUCCESS) {
+        Serial.printf("Alarm read failed with status: %s\n", ModbusClient::toString(tracker));
+        return;
+    }
 
-        // Print all alarm states
-        Serial.println("Alarm read complete!");
-        for (size_t i = 0; i < response.data.size(); i++) {
-            Serial.print("Alarm ");
-            Serial.print(i);
-            Serial.print(": ");
-            Serial.println(response.getCoil(i) ? "ACTIVE" : "inactive");
-        }
-    } else {
-        Serial.print("Alarm read failed with status: ");
-        Serial.println(ModbusClient::toString(tracker));
+    // Check if the response has an exception
+    if (response.exceptionCode != Modbus::NULL_EXCEPTION) {
+        Serial.printf("Modbus exception reading alarms: %s\n", Modbus::toString(response.exceptionCode));
+        return;
+    }
+
+    // Print all alarm states
+    Serial.println("Alarm read complete!");
+    for (size_t i = 0; i < response.regCount; i++) {
+        Serial.printf("Alarm %d: %s\n", i, response.getCoil(i) ? "ACTIVE" : "inactive");
     }
 }
 
@@ -287,28 +250,31 @@ void readSetpoints_Sync() {
     Modbus::Frame response;
     auto result = client.sendRequest(request, response);
     
-    if (result == ModbusClient::SUCCESS) {
-        if (response.exceptionCode != Modbus::NULL_EXCEPTION) {
-            Serial.print("Modbus exception reading setpoints: ");
-            Serial.println(Modbus::toString(response.exceptionCode));
-        } else if (response.data.size() >= 2) {
-            float tempSetpoint = response.getRegister(0) / 10.0f;
-            float humSetpoint = response.getRegister(1) / 10.0f;
-            
-            Serial.print("Temperature setpoint: ");
-            Serial.print(tempSetpoint);
-            Serial.println("°C");
-            
-            Serial.print("Humidity setpoint: ");
-            Serial.print(humSetpoint);
-            Serial.println("%");
-        } else {
-            Serial.println("Invalid response format");
-        }
-    } else {
-        Serial.print("Failed to read setpoints: ");
-        Serial.println(ModbusClient::toString(result));
+    // Check if the request was successful
+    if (result != ModbusClient::SUCCESS) {
+        Serial.printf("Failed to read setpoints: %s\n", ModbusClient::toString(result));
+        return;
     }
+
+    // Check if the response has an exception
+    if (response.exceptionCode != Modbus::NULL_EXCEPTION) {
+        Serial.printf("Modbus exception reading setpoints: %s\n", Modbus::toString(response.exceptionCode));
+        return;
+    }
+
+    // Check if the response has the correct number of registers
+    if (response.regCount < 2) {
+        Serial.println("Invalid response format");
+        return;
+    }
+
+    // Get the temperature and humidity setpoints from the response
+    float tempSetpoint = response.getRegister(0) / 10.0f;
+    float humSetpoint = response.getRegister(1) / 10.0f;
+    
+    // Print the read setpoints
+    Serial.printf("Temperature setpoint: %.1f°C\n", tempSetpoint);
+    Serial.printf("Humidity setpoint: %.1f%%\n", humSetpoint);
 }
 
 /**
@@ -324,7 +290,7 @@ void writeSetpoints_Async() {
         .slaveId = THERMOSTAT_SLAVE_ID,
         .regAddress = REG_TEMPERATURE_SETPOINT,
         .regCount = 2,  // Write both temperature and humidity setpoints
-        .data = { 225, 450 }  // temp = 22.5°C, humidity = 45%
+        .data = Modbus::packRegisters({ 225, 450 })  // temp = 22.5°C, humidity = 45%
     };
     
     // Create frame for response and status tracker
@@ -336,8 +302,7 @@ void writeSetpoints_Async() {
     auto result = client.sendRequest(request, response, &tracker);
     
     if (result != ModbusClient::SUCCESS) {
-        Serial.print("Failed to start setpoint write: ");
-        Serial.println(ModbusClient::toString(result));
+        Serial.printf("Failed to start setpoint write: %s\n", ModbusClient::toString(result));
         return;
     }
     
@@ -347,25 +312,26 @@ void writeSetpoints_Async() {
     // (usually this is done in another task/function)
     uint32_t startTime = millis();
     while (tracker == ModbusClient::NODATA) {
-        // Timeout after 2 seconds
+        // Timeout after 2 seconds (safety, should be already handled by the ModbusClient)
         if (millis() - startTime > 2000) {
             Serial.println("Waiting for response timed out");
             return;
         }
-        delay(10);
+        delay(1);
     }
     
-    if (tracker == ModbusClient::SUCCESS) {
-        if (response.exceptionCode != Modbus::NULL_EXCEPTION) {
-            Serial.print("Modbus exception writing setpoints: ");
-            Serial.println(Modbus::toString(response.exceptionCode));
-        } else {
-            Serial.println("Setpoint write complete!");
-            Serial.println("Temperature setpoint set to 22.5°C");
-            Serial.println("Humidity setpoint set to 45%");
-        }
-    } else {
-        Serial.print("Setpoint write failed with status: ");
-        Serial.println(ModbusClient::toString(tracker));
+    // Check if the request was successful
+    if (tracker != ModbusClient::SUCCESS) {
+        Serial.printf("Setpoint write failed with status: %s\n", ModbusClient::toString(tracker));
+        return;
     }
+
+    // Check if the response has an exception
+    if (response.exceptionCode != Modbus::NULL_EXCEPTION) {
+        Serial.printf("Modbus exception writing setpoints: %s\n", Modbus::toString(response.exceptionCode));
+        return;
+    }
+
+    // Print the result
+    Serial.println("Setpoint write complete! Temperature set to 22.5°C, Humidity set to 45%");
 }

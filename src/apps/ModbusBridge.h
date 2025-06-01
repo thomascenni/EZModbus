@@ -37,9 +37,7 @@ public:
      */
     static inline Result Error(Result res, const char* desc = nullptr
                         #ifdef EZMODBUS_DEBUG
-                        , const char* fileName = __builtin_FILE()
-                        , const char* funcName = __builtin_FUNCTION() 
-                        , int lineNo = __builtin_LINE()
+                        , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                         #endif
                         ) {
         #ifdef EZMODBUS_DEBUG
@@ -47,7 +45,7 @@ public:
             if (desc && *desc != '\0') {
                 logMessage += std::string(" (") + desc + ")";
             }
-            Modbus::Debug::LOG_MSG(logMessage, fileName, funcName, lineNo);
+            Modbus::Debug::LOG_MSG(logMessage, ctx);
         #endif
         return res;
     }
@@ -60,15 +58,13 @@ public:
      */
     static inline Result Success(const char* desc = nullptr
                           #ifdef EZMODBUS_DEBUG
-                          , const char* fileName = __builtin_FILE()
-                          , const char* funcName = __builtin_FUNCTION() 
-                          , int lineNo = __builtin_LINE()
+                          , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                           #endif
                           ) {
         #ifdef EZMODBUS_DEBUG
             if (desc && *desc != '\0') {
                 std::string logMessage = std::string("Success: ") + desc;
-                Modbus::Debug::LOG_MSG(logMessage, fileName, funcName, lineNo);
+                Modbus::Debug::LOG_MSG(logMessage, ctx);
             }
         #endif
         return SUCCESS;
