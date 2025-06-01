@@ -1,0 +1,32 @@
+{
+  "name": "EZModbus",
+  "version": "1.0.0",
+  "description": "C++ Modbus RTU/TCP library for ESP32",
+  "keywords": ["modbus", "rtu", "tcp", "communication", "industrial"],
+  "authors": [
+    {
+      "name": "Pierre Jay",
+      "email": "pierre.jay@gmail.com"
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pierrejay/EZModbus.git"
+  },
+  "homepage": "https://github.com/pierrejay/EZModbus/",
+  "license": "MIT",
+  "frameworks": ["arduino", "espidf"],
+  "platforms": ["espressif32"],
+  "build": {
+    "includeDir": "src",
+    "srcDir": "src"
+  },
+  "export": {
+    "include": [
+      "src/*",
+      "examples/*",
+      "README.md",
+      "library.json"
+    ]
+  }
+}
