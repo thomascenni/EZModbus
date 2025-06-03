@@ -1,6 +1,6 @@
 {
   "name": "EZModbus",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "C++ Modbus RTU/TCP library for ESP32",
   "keywords": ["modbus", "rtu", "tcp", "communication", "industrial"],
   "authors": [
