@@ -101,7 +101,7 @@ Once initialized, the library handles all the low-level details:
 
 - Environment
   - ESP-IDF (tested on v5.4)
-  - or ESP32 Arduino Core (tested on v3.0+) & PlatformIO - see [pioarduino](https://github.com/pioarduino/platform-espressif32))
+  - or ESP32 Arduino Core (tested on v3.0+) & PlatformIO - see [pioarduino](https://github.com/pioarduino/platform-espressif32)
 - FreeRTOS
 - C++17 or up
 
@@ -119,7 +119,7 @@ Once initialized, the library handles all the low-level details:
 - Add the repo into the `components` folder in your project
 - Include the `EZModbus` component in your project's root `CMakeLists.txt`
 
-```CMakeLists````
+```CMakeLists
 idf_component_register(SRCS "main.cpp"
                     PRIV_REQUIRES EZModbus ...
                     INCLUDE_DIRS "")
@@ -371,7 +371,7 @@ Register data is thus typically not accessed directly by reading or writing the 
 
 Those methods will set the `data` field of the `Frame` structure from a value or set of values :
 
-###### During `Frame` initialization
+**During `Frame` initialization**
 - `packRegisters`: set frame data from a unique register value or list of registers values
   - From a vector: `packRegisters(std::vector<uint16_t> regs)`
   - From a buffer: `packRegisters(uint16_t* buf, size_t len)`
@@ -383,13 +383,13 @@ Those methods will set the `data` field of the `Frame` structure from a value or
 
 Out of convenience, `packCoils` also include overloads for `uint16_t` in addition to `bool`, where any non-zero value will be considered as a `true` state.
 
-###### After `Frame` initialization
+**After `Frame` initialization**
 - `Frame::setRegisters`: set frame data & register count from a unique or list of registers 
 - `Frame::setCoils`: set frame data & register count from a unique or list of coils 
 
 The types used for arguments are the same as the `packXXX()` methods.
 
-###### Examples
+**Examples**
 
 ```cpp
 // From initializer list, in place
@@ -424,12 +424,12 @@ request.setRegisters(values, (sizeof(values) / sizeof(values[0])));
 
 Those methods will recover the data from a struct, either for a specific register or all of them:
 
-###### Reading a specific register
+**Reading a specific register**
 
 - `Frame::getRegister(size_t idx)`: returns a `uint16_t` with the register value at index `idx`
 - `Frame::getCoil(size_t idx)`: returns a `bool` with the coil state at index `idx`
 
-###### Fetching all registers
+**Fetching all registers**
 
 - `Frame::getRegisters()`: returns all registers values
   - To a vector: `Frame::getRegisters()` returns a `std::vector<uint16_t>`
@@ -438,7 +438,7 @@ Those methods will recover the data from a struct, either for a specific registe
   - To a vector: `Frame::getCoils()` returns a `std::vector<bool>`
   - To a buffer: `Frame::getCoils(bool* buf, size_t len)` writes coil states into the provided buffer & returns a `size_t` with the number of coils actually fetched
 
-###### Examples
+**Examples**
 
 ```cpp
 // REGISTERS EXAMPLES
