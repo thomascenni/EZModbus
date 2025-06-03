@@ -97,22 +97,44 @@ Once initialized, the library handles all the low-level details:
 
 ## Installation
 
-- Clone the repo into your Arduino or IDF project’s libraries directory (e.g. `/lib` for PlatformIO).
-- In your sketch, include:
-    
-    ```cpp
-    #include <EZModbus.h>
-    ```
-
 ### Dependencies
 
-- Espressif native IDF or Arduino framework
-  - ESP-IDF (tested on v5.0+)
-  - or ESP32 Arduino Core (tested on v3.0+, see [pioarduino](https://github.com/pioarduino/platform-espressif32))
-- C++17 or up
+- Environment
+  - ESP-IDF (tested on v5.4)
+  - or ESP32 Arduino Core (tested on v3.0+) & PlatformIO - see [pioarduino](https://github.com/pioarduino/platform-espressif32))
 - FreeRTOS
+- C++17 or up
+
+### PlatformIO installation
+
+- Add the repo into your `lib` folder
+- In your main sketch, include:
+    
+```cpp
+#include <EZModbus.h>
+```
+
+### ESP-IDF installation
+
+- Add the repo into the `components` folder in your project
+- Include the `EZModbus` component in your project's root `CMakeLists.txt`
+
+```CMakeLists````
+idf_component_register(SRCS "main.cpp"
+                    PRIV_REQUIRES EZModbus ...
+                    INCLUDE_DIRS "")
+```
+- In your main sketch, include:
+    
+```cpp
+#include <EZModbus.h>
+```
 
 ## Quick Start
+
+This quick start guide presents the basic usage of EZModbus for Client, Server & Bridge applications, with the Arduino API.
+
+ESP-IDF only differs in not including `Arduino.h` & using the native UART ports for RS485 configuration. Refer to the [Usage](#usage) section below for more details.
 
 ### Modbus Client
 
