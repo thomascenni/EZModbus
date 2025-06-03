@@ -174,15 +174,19 @@ Client::Result Client::begin() {
         return Error(ERR_INIT_FAILED, "cannot set receive callback on interface");
     }
 
-    BaseType_t cleanupTaskRes = xTaskCreatePinnedToCore(
+    BaseType_t txResultTaskRes = xTaskCreatePinnedToCore(
         /*pxTaskCode*/      handleTxResultTask,
         /*pcName*/          "ModbusClient",
-        /*usStackDepth*/    CLEANUP_TASK_STACK_SIZE,
+        /*usStackDepth*/    TX_RESULT_TASK_STACK_SIZE,
         /*pvParameters*/    this,
         /*uxPriority*/      tskIDLE_PRIORITY,
         /*pvCreatedTask*/   &_handleTxResultTaskHandle,
         /*xCoreID*/         tskNO_AFFINITY
     );
+
+    if (txResultTaskRes != pdPASS) {
+        return Error(ERR_INIT_FAILED, "failed to create txResultTask");
+    }
 
     _isInitialized = true;
     return Success();

@@ -794,6 +794,11 @@ This separation ensures you maintain control over hardware while benefiting from
 
 **Note:** The driver must be properly initialized with `begin()` **before** the other Modbus components! Otherwise you will get an `ERR_INIT_FAILED` error when trying to initialize the Modbus application layer.
 
+#### System resources usage
+
+- The UART/RS485 HAL wrapper uses the native ESP UART implementation and does not rely on additional tasks.
+- The TCP HAL wrapper spins up a task to handle sockets. Its stack size is set to 4096 bytes by default (sufficient for handling 4 sockets at a time), with a priority of `tskIDLE_PRIORITY + 1` & core affinity set to `tskNO_AFFINITY`.
+
 ### Interfaces
 
 The interface layer handles physical communication details for Modbus RTU & TCP protocols. They don't need to be initialized separately, they are automatically initialized when calling `begin()` on the application layer instances (Client, Server & Bridge).
@@ -823,6 +828,14 @@ rtuIface.setSilenceTimeMs(5);  // Manually set silence period - 5~10 ms generall
 ModbusInterface::TCP tcpIface(tcpClient, Modbus::CLIENT);
 ```
 If you pass the wrong TCP HAL object type (for example a `tcpServer` for a Modbus TCP client), the `begin()` method will return an `ERR_INIT_FAILED` error.
+
+#### System resources usage
+
+Both interfaces rely on a FreeRTOS task to manage communication:
+- Modbus RTU interface: 4096 bytes stack size, `tskIDLE_PRIORITY + 1` priority, `tskNO_AFFINITY` core
+- Modbus TCP interface: 4096 bytes stack size (or 6144 when logs enabled), `tskIDLE_PRIORITY + 1` priority, `tskNO_AFFINITY` core
+
+Those tasks use an event-driven logic (fed by the driver layer) and do not consume useless CPU clocks when idle (e.g. continuous polling with `vTaskDelay(1)`).
 
 ### Applications
 
@@ -1295,7 +1308,7 @@ Or on PlatformIO, in the `platformio.ini` file:
 build_flags = -D EZMODBUS_DEBUG
 ```
 
-Due to the multi-threaded nature of the library, EZModbus uses a custom thread-safe logging (`Modbus::Logger`) internally, through log helpers defined in an utility file (`ModbusDebug.h`). When debug is disabled, the methods are all neutralized by the define flags, in order to completely remove any overhead (even evaluating strings in `LOG_X()` arguments). This was chosen instead of the native ESP logging system due to its overhead.
+Due to the multi-threaded nature of the library, EZModbus uses a custom thread-safe logging (`Modbus::Logger`) internally, through log helpers defined in an utility file (`ModbusDebug.h`). When debug is disabled, the methods are all neutralized by the define flags, in order to completely remove any overhead (even evaluating strings in `LOG_X()` arguments). This was chosen instead of the native ESP logging system due to its overhead, it is anyway not required in production as you can implement your own logs based on the error returns from the library.
 
 By default, logs are printed to the default Serial port on Arduino (`Serial`, usually USB CDC on most ESP32 boards) or `UART_NUM_0` port for ESP-IDF. You can redirect them with the `EZMODBUS_LOG_OUTPUT` flag (in your code right before including `EZModbus.h` or in your `platformio.ini` file):
 
@@ -1308,6 +1321,14 @@ By default, logs are printed to the default Serial port on Arduino (`Serial`, us
 ; In your platformio.ini:
 build_flags = -D EZMODBUS_LOG_OUTPUT=Serial1 ; Prints logs to Serial1
 ```
+
+### System resources usage
+
+The bridge is an overlay for the underlying application layers, it does not rely on additional tasks or resources.
+
+The server is purely asynchronous, it is fed by the requests forwarded by the transport layer and does not use any FreeRTOS task internally either.
+
+The client spins up a task to handle outcome of TX requests asynchronously : 2048 bytes stack size (or 4096 bytes when logs are enabled), `tskIDLE_PRIORITY + 1` priority, `tskNO_AFFINITY` core. It does not consume any CPU clock when idle. However, the synchronous API uses busy-waiting (`vTaskDelay(1)`) while waiting for a request to complete.
 
 ## Usage Examples
 

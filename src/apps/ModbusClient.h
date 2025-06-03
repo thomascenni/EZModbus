@@ -22,9 +22,9 @@ public:
 
     // Tasks stack sizes (higher for debug to let room for the printf/hexdump buffers)
     #ifdef EZMODBUS_DEBUG
-        static constexpr uint32_t CLEANUP_TASK_STACK_SIZE = 4096;
+        static constexpr uint32_t TX_RESULT_TASK_STACK_SIZE = 4096;
     #else
-        static constexpr uint32_t CLEANUP_TASK_STACK_SIZE = 2048;
+        static constexpr uint32_t TX_RESULT_TASK_STACK_SIZE = 2048;
     #endif
 
     // ===================================================================================
