@@ -1,7 +1,14 @@
+/**
+ * @file ModbusDMX.h
+ * @brief Example using EZModbus for a DMX application
+ * @brief (demonstration of Modbus DMX usage)
+ * @note Depends on the EZDMX library (https://github.com/pierrejay/esp32-EZDMX)
+ */
+
 #pragma once
 
-#include "ModbusInterface.h"
-#include "ModbusCore.h"
+#include "interfaces/ModbusInterface.h"
+#include "core/ModbusCore.h"
 #include <EZDMX.h>
 #include <vector>
 #include <map>

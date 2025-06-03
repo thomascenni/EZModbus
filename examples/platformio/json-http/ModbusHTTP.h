@@ -1,23 +1,9 @@
-//
-// ModbusHTTP is a class that implements the ModbusInterface interface for the HTTP protocol.
-//
-// It uses the ESPAsyncWebServer framework to manage HTTP & WebSocket requests.
-//
-// It is instantiated by passing the port to use for the HTTP server, and the preferred transport type
-// for spontaneous messages (messages sortants always available via the GET API,
-// but Websocket enabled if transportType is WS).
-//
-// It supports both protocols in a flexible way :
-// - HTTP REST : API POST for incoming messages, API GET for polling outgoing messages by the interface
-// - Websocket : Incoming/outgoing messages sent/received in JSON format, read/written from/to all connected clients
-//
-// The REST API provides a simple facade for an HTTP server (e.g. Gateway HTTP REST to ModbusRTU slave), 
-// the response is sent to the client (the interface) and/or exposed via the GET API when the Modbus request is processed.
-// It also handles timeouts for outgoing requests.
-//
-// The Websocket allows to push spontaneous messages to the interface, and to receive incoming messages
-// from all connected clients.
-//
+/**
+ * @file ModbusHTTP.h
+ * @brief Example using EZModbus for a Modbus HTTP Server application
+ * @brief (implementation of the ModbusInterface layer for HTTP REST)
+ * @note Depends on the ESPAsyncWebServer & ArduinoJson libraries
+ */
 
 #pragma once
 
@@ -26,8 +12,9 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
-#include <ModbusCore.h>
-#include <ModbusInterface.h>
+#include <core/ModbusCore.h>
+#include <core/ModbusCodec.h>
+#include <interfaces/ModbusInterface.h>
 #include "ModbusJsonCodec.h"
 
 class ModbusHTTP : public ModbusInterface::IInterface {

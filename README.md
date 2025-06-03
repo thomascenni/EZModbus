@@ -1311,16 +1311,27 @@ build_flags = -D EZMODBUS_LOG_OUTPUT=Serial1 ; Prints logs to Serial1
 
 ## Usage Examples
 
-A broad set of examples is available in the lib folder, check the `/examples` directory:
+A small set of examples is available in the lib folder, check the `/examples` directory:
+
+### PlatformIO (Arduino Core) - `examples/platformio`
+
+3 basic examples:
 
 - `/client`: Modbus RTU & TCP clients
 - `/server`: Modbus RTU & TCP servers
-- `/bridge`: Modbus RTU↔TCP bridge
+- `/bridge`: Modbus RTU ↔ TCP bridge
 
-There are also two additional folders for examples showcasing the flexibility of EZModbus to develop other applications based on the Modbus protocol:
+To run them, replace the content of your `main.cpp` file by the provided ones. Normally, if you have already imported the library in your PlatformIO project repository (`/lib` directory), you don't need to modify your `platformio.ini` file.
+
+2 additional examples folders showcasing the flexibility of EZModbus to be extended for other applications based on the Modbus protocol:
 
 - `/dmx`: Modbus-to-DMX server/device using the `EZDMX` library
 - `/json-http`: Modbus JSON codec & HTTP server using the `ESPAsyncWebserver` & `ArduinoJson` libraries
+
+### ESP-IDF - `examples/idf`
+
+1 basic example in `/main_rtu-client-server`: RTU client ↔ server loopback example. To run it, replace the content of your `main` folder in a fresh ESP-IDF project with the `main.cpp` & `CMakeLists.txt` files provided in the example. You need to have imported the EZModbus library in your project's `components` folder first.
+
 
 ## Memory Management Approach
 

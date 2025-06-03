@@ -1,9 +1,13 @@
-// Add-on to ModbusCore.h implementing JSON encoding/decoding
+/**
+ * @file ModbusJsonCodec.h
+ * @brief Add-on to ModbusCodec.h implementing JSON encoding/decoding
+ * @note Depends on the ArduinoJson library
+ */
 
 #pragma once
 
 // Global
-#include <ModbusCore.h>
+#include <core/ModbusCodec.h>
 #include <ArduinoJson.h>
 
 namespace ModbusCodec {
