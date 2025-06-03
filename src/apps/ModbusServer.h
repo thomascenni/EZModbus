@@ -188,10 +188,6 @@ private:
     RegisterStore _holdingRegisterStore;
     CBStore _cbStore;
 
-    // Callbacks for direct access to value pointers
-    ReadCallbackC _directReadCb;
-    WriteCallbackC _directWriteCb;
-
     // ===================================================================================
     // PRIVATE METHODS
     // ===================================================================================

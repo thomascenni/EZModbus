@@ -29,7 +29,6 @@ public:
     #else
         static constexpr uint32_t RXTX_TASK_STACK_SIZE = 4096;
     #endif
-    static constexpr UBaseType_t RXTX_TASK_PRIORITY = tskIDLE_PRIORITY + 2;
 
     // ===================================================================================
     // DATA STRUCTURES

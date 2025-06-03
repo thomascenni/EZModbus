@@ -64,7 +64,7 @@ Server::Result Server::begin() {
 Server::Result Server::setRegisterCount(const Modbus::RegisterType type, const uint16_t count) {
     if (count > MAX_REGISTERS) {
         char errBuf[64];
-        snprintf(errBuf, sizeof(errBuf), "Cannot reserve more than %d registers", MAX_REGISTERS);
+        snprintf(errBuf, sizeof(errBuf), "Cannot reserve more than %lu registers", (unsigned long)MAX_REGISTERS);
         return Error(Server::ERR_REG_OVERFLOW, errBuf);
     }
 
@@ -220,7 +220,7 @@ Server::Register Server::RegisterEntry::toRegister(Server* srv) {
  * @note Offers the same signature as read callbacks but in C function pointer format
  *       (for static allocation)
  */
-static uint16_t _directReadCb(const Server::Register& r) {
+static uint16_t _static_directReadCbImpl(const Server::Register& r) {
     if (r.value) return static_cast<uint16_t>(*r.value & 0xFFFF); // Take the lower 16 bits
     return 0;
 }
@@ -232,7 +232,7 @@ static uint16_t _directReadCb(const Server::Register& r) {
  * @note Offers the same signature as write callbacks but in C function pointer format
  *       (for static allocation)
  */
-static bool _directWriteCb(uint16_t value, const Server::Register& r) {
+static bool _static_directWriteCbImpl(uint16_t value, const Server::Register& r) {
     if (r.value) { 
         *r.value = (*r.value & 0xFFFF0000) | value;  // Only update the lower 16 bits
         return true; 
@@ -303,7 +303,7 @@ Server::CBEntry* Server::findCBEntry(const uint32_t cbIndex) {
  */
 Server::ReadCallback Server::findReadCallback(const Server::RegisterEntry& reg) {
     // If the register has a value pointer, read it using our static function pointer
-    if (reg.value) return _directReadCb;
+    if (reg.value) return _static_directReadCbImpl;
 
     // Otherwise, return the stored callback or nullptr if not found
     auto cbEntry = findCBEntry(reg.cbIndex);
@@ -317,7 +317,7 @@ Server::ReadCallback Server::findReadCallback(const Server::RegisterEntry& reg) 
  */
 Server::WriteCallback Server::findWriteCallback(const Server::RegisterEntry& reg) {
     // If the register has a value pointer, write it using our static function pointer
-    if (reg.value) return _directWriteCb;
+    if (reg.value) return _static_directWriteCbImpl;
 
     // Otherwise, return the stored callback or nullptr if not found
     auto cbEntry = findCBEntry(reg.cbIndex);

@@ -127,10 +127,11 @@ private:
         uint32_t _timestampMs = 0;
         volatile bool _active = false;
         Mutex _mutex;
+        TimerHandle_t _timeoutTimer = nullptr;
 
     public:
         // Helper methods
-        bool set(const Modbus::Frame& request, Modbus::Frame* response, Result* tracker);
+        bool set(const Modbus::Frame& request, Modbus::Frame* response, Result* tracker, uint32_t timeoutMs);
         void clear();
         // Lock-free methods
         const bool isActive() const;
@@ -140,6 +141,10 @@ private:
         // Locked methods
         void setResult(Result result);
         void setResponse(const Modbus::Frame& response);
+        // Timeout callback
+        static void timeoutCallback(TimerHandle_t timer);
+        // Destructor
+        ~PendingRequest();
     };
 
     // ===================================================================================
@@ -157,14 +162,14 @@ private:
     // ===================================================================================
 
     void handleResponse(const Modbus::Frame& response);
-    inline bool waitTaskNotification(uint32_t& value, const uint32_t timeoutMs = 1);
+    inline bool waitTaskNotification(uint32_t& value, const uint32_t timeoutMs = 200);
 
     // ===================================================================================
     // TASKS
     // ===================================================================================
 
-    static void cleanupRequestsTask(void* client);
-    TaskHandle_t _cleanupTaskHandle;
+    static void handleTxResultTask(void* client);
+    TaskHandle_t _handleTxResultTaskHandle;
 
 };
 

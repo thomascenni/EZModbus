@@ -88,9 +88,9 @@ RTU::Result RTU::begin() {
         /*pcName*/          "ModbusRTU_RxTxTask", 
         /*usStackDepth*/    RXTX_TASK_STACK_SIZE,
         /*pvParameters*/    this,
-        /*uxPriority*/      RXTX_TASK_PRIORITY,
+        /*uxPriority*/      tskIDLE_PRIORITY + 1,
         /*pvCreatedTask*/   &_rxTxTaskHandle,
-        /*xCoreID*/         1 
+        /*xCoreID*/         tskNO_AFFINITY
     );
 
     // Cleanup resources if task creation failed
@@ -201,8 +201,8 @@ RTU::Result RTU::sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask) 
 
     // Update TX buffer under critical section (mutex protection)
     {
-        Lock lock(_txMutex, 0); // try-lock no wait
-        if (!lock.isLocked() || _txBuffer.size() != 0) {
+        Lock guard(_txMutex, 0); // try-lock no wait
+        if (!guard.isLocked() || _txBuffer.size() != 0) {
             notifyTaskWithResult(notifyTask, ERR_BUSY);
             return Error(ERR_BUSY, "TX already in progress");
         }
@@ -247,8 +247,8 @@ RTU::Result RTU::sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask) 
  */
 bool RTU::isReady() {
     if (!_isInitialized) return false;
-    Lock lock(_txMutex, 0); // try-lock no wait
-    if (!lock.isLocked() || _txBuffer.size() > 0) return false;
+    Lock guard(_txMutex, 0); // try-lock no wait
+    if (!guard.isLocked() || _txBuffer.size() > 0) return false;
     return true;
 }
 

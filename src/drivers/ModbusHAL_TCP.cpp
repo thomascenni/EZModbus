@@ -257,7 +257,7 @@ bool TCP::beginServer(uint16_t port, uint32_t ip) {
         "ModbusHALtcpSrv",
         4096, // Stack size
         this, // Task parameter
-        5,    // Priority
+        tskIDLE_PRIORITY + 1,    // Priority
         &_tcpTaskHandle,
         tskNO_AFFINITY // Run on any core
     );

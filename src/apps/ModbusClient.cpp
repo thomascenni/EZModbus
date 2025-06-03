@@ -11,15 +11,28 @@ namespace Modbus {
 // DATA STRUCTURES METHODS
 // ===================================================================================
 
+/* @brief Timeout callback for pending request
+ * @param timer The timer handle
+ */
+void Client::PendingRequest::timeoutCallback(TimerHandle_t timer) {
+    auto* pendingReq = static_cast<PendingRequest*>(pvTimerGetTimerID(timer));
+    if (pendingReq && pendingReq->isActive()) {
+        pendingReq->setResult(ERR_TIMEOUT);
+        pendingReq->clear();
+        Modbus::Debug::LOG_MSG("Request timed out via timer");
+    }
+}
+
 /* @brief Set the pending request
  * @param request The request to set
  * @param response Where to store the response (response.data will be resized to match its size)
  * @param tracker Pointer to the transfer result tracker
+ * @param timeoutMs Timeout in milliseconds
  * @return true if the pending request was set successfully, false is already active (clear it first)
  */
-bool Client::PendingRequest::set(const Modbus::Frame& request, Modbus::Frame* response, Result* tracker) {
+bool Client::PendingRequest::set(const Modbus::Frame& request, Modbus::Frame* response, Result* tracker, uint32_t timeoutMs) {
     if (isActive()) return false; // The pending request must be cleared first
-    Lock lock(_mutex);
+    Lock guard(_mutex);
     _reqMetadata.fc = request.fc;
     _reqMetadata.slaveId = request.slaveId;
     _reqMetadata.regAddress = request.regAddress;
@@ -28,13 +41,38 @@ bool Client::PendingRequest::set(const Modbus::Frame& request, Modbus::Frame* re
     _tracker = tracker;
     _timestampMs = TIME_MS();
     _active = true;
+    
+    // Create and start timeout timer
+    if (!_timeoutTimer) {
+        _timeoutTimer = xTimerCreate(
+            "ModbusTimeout",
+            pdMS_TO_TICKS(timeoutMs),
+            pdFALSE,  // one-shot
+            this,     // timer ID = this PendingRequest
+            timeoutCallback
+        );
+    } else {
+        // Update timer period and restart
+        xTimerChangePeriod(_timeoutTimer, pdMS_TO_TICKS(timeoutMs), 0);
+    }
+    
+    if (_timeoutTimer) {
+        xTimerStart(_timeoutTimer, 0);
+    }
+    
     return true;
 }
 
 /* @brief Clear the pending request
  */
 void Client::PendingRequest::clear() {
-    Lock lock(_mutex);
+    Lock guard(_mutex);
+    
+    // Stop timeout timer
+    if (_timeoutTimer) {
+        xTimerStop(_timeoutTimer, 0);
+    }
+    
     _reqMetadata.clear();
     _tracker = nullptr;
     _pResponse = nullptr;
@@ -66,7 +104,7 @@ const Modbus::Frame& Client::PendingRequest::getRequestMetadata() const { return
  * @param result The result to set
  */
 void Client::PendingRequest::setResult(Result result) { 
-    Lock lock(_mutex); 
+    Lock guard(_mutex); 
     if (_tracker) *_tracker = result; 
 }
 
@@ -74,9 +112,18 @@ void Client::PendingRequest::setResult(Result result) {
  * @param response The response to set
  */
 void Client::PendingRequest::setResponse(const Modbus::Frame& response) { 
-    Lock lock(_mutex);
+    Lock guard(_mutex);
     if (_pResponse) *_pResponse = response;
     if (_tracker) *_tracker = SUCCESS;
+}
+
+/* @brief Destructor for PendingRequest - cleanup timer
+ */
+Client::PendingRequest::~PendingRequest() {
+    if (_timeoutTimer) {
+        xTimerDelete(_timeoutTimer, 0);
+        _timeoutTimer = nullptr;
+    }
 }
 
 // ===================================================================================
@@ -91,10 +138,10 @@ Client::Client(ModbusInterface::IInterface& interface, uint32_t timeoutMs) :
 {}
 
 Client::~Client() {
-    if (_isInitialized && _cleanupTaskHandle != nullptr) {
+    if (_isInitialized && _handleTxResultTaskHandle != nullptr) {
         // Kill the cleanup task
-        vTaskDelete(_cleanupTaskHandle);
-        _cleanupTaskHandle = nullptr;
+        vTaskDelete(_handleTxResultTaskHandle);
+        _handleTxResultTaskHandle = nullptr;
     }
     
     // Cleanup any active pending request
@@ -128,13 +175,13 @@ Client::Result Client::begin() {
     }
 
     BaseType_t cleanupTaskRes = xTaskCreatePinnedToCore(
-        /*pxTaskCode*/      cleanupRequestsTask,
+        /*pxTaskCode*/      handleTxResultTask,
         /*pcName*/          "ModbusClient",
         /*usStackDepth*/    CLEANUP_TASK_STACK_SIZE,
         /*pvParameters*/    this,
-        /*uxPriority*/      tskIDLE_PRIORITY+1,
-        /*pvCreatedTask*/   &_cleanupTaskHandle,
-        /*xCoreID*/         0
+        /*uxPriority*/      tskIDLE_PRIORITY,
+        /*pvCreatedTask*/   &_handleTxResultTaskHandle,
+        /*xCoreID*/         tskNO_AFFINITY
     );
 
     _isInitialized = true;
@@ -176,7 +223,7 @@ Client::Result Client::sendRequest(const Modbus::Frame& request,
     Result* tracker = userTracker ? userTracker : &localResult;
 
     // Basic checks passed, we try to initiate the pending request
-    if (!_pendingRequest.set(request, &response, tracker)) {
+    if (!_pendingRequest.set(request, &response, tracker, _requestTimeoutMs)) {
         return Error(ERR_BUSY, "request already in progress");
     }
 
@@ -185,7 +232,7 @@ Client::Result Client::sendRequest(const Modbus::Frame& request,
     bool isBroadcast = Modbus::isBroadcastId(request.slaveId);
 
     // Send the frame on the interface
-    auto sendRes = _interface.sendFrame(request, _cleanupTaskHandle);
+    auto sendRes = _interface.sendFrame(request, _handleTxResultTaskHandle);
     if (sendRes != ModbusInterface::IInterface::SUCCESS) {
         _pendingRequest.setResult(ERR_TX_FAILED);
         _pendingRequest.clear();
@@ -266,21 +313,21 @@ inline bool Client::waitTaskNotification(uint32_t& value, const uint32_t timeout
 }
 
 /* @brief This task is used to:
- * @brief - Clean up timeouted requests
  * @brief - Raise error if the TX failed
  * @brief - Properly terminate successful broadcast requests by feeding the response callback
  * @note This task is launched in a dedicated thread by the begin() method
+ * @note Timeouts are now handled by FreeRTOS timers, not by this task
  */
-void Client::cleanupRequestsTask(void* client) {
+void Client::handleTxResultTask(void* client) {
     auto self = static_cast<Client*>(client);
     while (true) {
         // Role of this task:
-        // 1. Clean up timeouted requests
-        // 2. Raise error if the TX failed
-        // 3. Properly terminate successful broadcast requests by feeding the response callback
+        // 1. Raise error if the TX failed
+        // 2. Properly terminate successful broadcast requests by feeding the response callback
+        // 3. Timeouts are now handled automatically by FreeRTOS timers
         uint32_t value = 0;
         // Wait for a notification from the RTU TX task (UART send outcome)
-        if (self->waitTaskNotification(value, 1) && self->_pendingRequest.isActive()) {
+        if (self->_pendingRequest.isActive() && self->waitTaskNotification(value)) {
             auto sendResult = static_cast<ModbusInterface::IInterface::Result>(value);
             // If it's a broadcast and the TX succeeded, it's the end of the request
             bool isBroadcast = Modbus::isBroadcastId(self->_pendingRequest.getRequestMetadata().slaveId);
@@ -301,15 +348,9 @@ void Client::cleanupRequestsTask(void* client) {
                 self->_pendingRequest.clear();
             }
         }
-        // Check if the current pending request has timed out
-        uint32_t timeElapsed = TIME_MS() - self->_pendingRequest.getTimestampMs();
-        if (self->_pendingRequest.isActive() && timeElapsed > self->_requestTimeoutMs) {
-            self->_pendingRequest.setResult(ERR_TIMEOUT);
-            self->_pendingRequest.clear();
-            Modbus::Debug::LOG_MSGF("Pending request timed out after %d ms", timeElapsed);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1));
+        
+        // Timeout is now handled by FreeRTOS timer, no manual checking needed
+        // vTaskDelay(pdMS_TO_TICKS(50));  // Longer delay since we only handle TX notifications
     }
 }
 

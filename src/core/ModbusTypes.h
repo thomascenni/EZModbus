@@ -18,9 +18,10 @@
 #ifndef NATIVE_TEST
 
 #include "freertos/FreeRTOS.h"
-#include "semphr.h"
-#include "esp_timer.h"
+#include "freertos/semphr.h"
+#include "freertos/timers.h"
 #include "freertos/portmacro.h"
+#include "esp_timer.h"
 
 // ===================================================================================
 // TIMING MACROS
