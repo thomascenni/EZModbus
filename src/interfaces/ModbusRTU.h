@@ -23,7 +23,7 @@ public:
 
     static constexpr uint32_t RXTX_QUEUE_CHECK_TIMEOUT_MS = 100;
 
-    // Tasks stack sizes (higher for debug to let room for the printf/hexdump buffers)
+    // Tasks stack sizes
     #ifdef EZMODBUS_DEBUG
         static constexpr uint32_t RXTX_TASK_STACK_SIZE = 4096;
     #else
@@ -79,7 +79,7 @@ public:
     Result begin() override;
     Result setSilenceTimeMs(uint32_t silenceTimeMs);
     Result setSilenceTimeBaud(); 
-    Result sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask = nullptr) override;
+    Result sendFrame(const Modbus::Frame& frame, TxResultCallback txCallback, void* ctx) override;
     bool isReady() override;
     TaskHandle_t getRxTxTaskHandle();
 
@@ -100,9 +100,13 @@ private:
     std::array<uint8_t, ModbusCodec::RTU::MAX_FRAME_SIZE> _txBuf;
     ByteBuffer _txBuffer; // Linked to _txBuf
     Mutex _txMutex; // Protects access to _txBuffer
-    TaskHandle_t _txBufferNotifyTask = nullptr;  // Stores task to be notified with TX result
+    TxResultCallback _txResultCallback; // Stores callback to be called with TX result
+    void* _txCallbackCtx; // Stores context for TX callback
     
     // Data processing
+    // _rxEventQueue: receives RX events from HAL
+    // _txRequestQueue: just a dummy signaling queue so that we can use xQueueSet 
+    // to wait for both RX and TX without wasting CPU
     QueueHandle_t _rxEventQueue = nullptr;
     QueueHandle_t _txRequestQueue = nullptr; 
     QueueSetHandle_t _eventQueueSet = nullptr; // Combines RX event queue + UART event queue
@@ -118,7 +122,7 @@ private:
     void killRxTxTask();
     Result processReceivedFrame(const ByteBuffer& frameBytes);
     Result updateUartIdleDetection();
-    inline void notifyTaskWithResult(TaskHandle_t task, ModbusInterface::IInterface::Result res);
+    inline void notifyTxResult(ModbusInterface::IInterface::Result res);
 
     // Utility methods for rxTxTask
     Result handleUartEvent(const uart_event_t& event);

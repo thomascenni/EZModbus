@@ -21,6 +21,7 @@
 #include "freertos/semphr.h"
 #include "freertos/timers.h"
 #include "freertos/portmacro.h"
+#include "freertos/event_groups.h"
 #include "esp_timer.h"
 
 // ===================================================================================

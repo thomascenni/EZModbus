@@ -1467,6 +1467,113 @@ void test_concurrent_calls() {
     vTaskDelay(pdMS_TO_TICKS(50));
 }
 
+
+// -----------------------------------------------------------------------------
+// CALLBACK PATH TESTS (SUCCESS & TIMEOUT)
+// -----------------------------------------------------------------------------
+
+struct CbData {
+    SemaphoreHandle_t sem;
+    Modbus::Client::Result res;
+    uint16_t value;
+};
+
+static void cbStoreResult(Modbus::Client::Result res, const Modbus::Frame* resp, void* ctx) {
+    if (ctx) {
+        auto* d = static_cast<CbData*>(ctx);
+        d->res = res;
+        if (res == Modbus::Client::SUCCESS) {
+            // For registers, take first value (addr 0)
+            if (resp && resp->regCount > 0) d->value = resp->data[0];
+        }
+        xSemaphoreGive(d->sem);
+    }
+}
+
+static SemaphoreHandle_t gNoCtxSem = nullptr;
+static Modbus::Client::Result gNoCtxRes = Modbus::Client::NODATA;
+static void cbNoCtx(Modbus::Client::Result res, const Modbus::Frame* resp, void* ctx) {
+    gNoCtxRes = res;
+    if (gNoCtxSem) xSemaphoreGive(gNoCtxSem);
+}
+
+void test_callback_success() {
+    Modbus::Logger::logln();
+    Modbus::Logger::logln("TEST_CALLBACK_SUCCESS: ASYNCHRONOUS CALLBACK SUCCESS");
+    // ---------- With userCtx ----------
+    CbData data{ xSemaphoreCreateBinary(), Modbus::Client::NODATA, 0 };
+
+    Modbus::Frame req = {
+        .type = Modbus::REQUEST,
+        .fc = Modbus::READ_HOLDING_REGISTERS,
+        .slaveId = TEST_SLAVE_ID,
+        .regAddress = 0,
+        .regCount = 1,
+        .data = {},
+        .exceptionCode = Modbus::NULL_EXCEPTION
+    };
+
+    auto res = client.sendRequest(req, cbStoreResult, &data);
+    TEST_ASSERT_EQUAL(Modbus::Client::SUCCESS, res);
+
+    // Wait for callback (<= timeout + margin)
+    TEST_ASSERT_EQUAL(pdTRUE, xSemaphoreTake(data.sem, pdMS_TO_TICKS(Modbus::Client::DEFAULT_REQUEST_TIMEOUT_MS + 200)));
+    TEST_ASSERT_EQUAL(Modbus::Client::SUCCESS, data.res);
+
+    // ---------- Without userCtx ----------
+    gNoCtxSem = xSemaphoreCreateBinary();
+    gNoCtxRes = Modbus::Client::NODATA;
+
+    res = client.sendRequest(req, cbNoCtx, nullptr);
+    TEST_ASSERT_EQUAL(Modbus::Client::SUCCESS, res);
+    TEST_ASSERT_EQUAL(pdTRUE, xSemaphoreTake(gNoCtxSem, pdMS_TO_TICKS(Modbus::Client::DEFAULT_REQUEST_TIMEOUT_MS + 200)));
+    TEST_ASSERT_EQUAL(Modbus::Client::SUCCESS, gNoCtxRes);
+
+    vSemaphoreDelete(data.sem);
+    vSemaphoreDelete(gNoCtxSem);
+}
+
+void test_callback_timeout() {
+    Modbus::Logger::logln();
+    Modbus::Logger::logln("TEST_CALLBACK_TIMEOUT: ASYNCHRONOUS CALLBACK TIMEOUT");
+    // Suspend server RX task to force timeout
+    TaskHandle_t serverRxTask = mbt.getRxTxTaskHandle();
+    vTaskSuspend(serverRxTask);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    // ---------- With userCtx ----------
+    CbData data{ xSemaphoreCreateBinary(), Modbus::Client::NODATA, 0 };
+    Modbus::Frame req = {
+        .type = Modbus::REQUEST,
+        .fc = Modbus::READ_HOLDING_REGISTERS,
+        .slaveId = TEST_SLAVE_ID,
+        .regAddress = 0,
+        .regCount = 1,
+        .data = {},
+        .exceptionCode = Modbus::NULL_EXCEPTION
+    };
+    auto res = client.sendRequest(req, cbStoreResult, &data);
+    TEST_ASSERT_EQUAL(Modbus::Client::SUCCESS, res);
+    TEST_ASSERT_EQUAL(pdTRUE, xSemaphoreTake(data.sem, pdMS_TO_TICKS(Modbus::Client::DEFAULT_REQUEST_TIMEOUT_MS + 500)));
+    TEST_ASSERT_EQUAL(Modbus::Client::ERR_TIMEOUT, data.res);
+
+    // ---------- Without userCtx ----------
+    gNoCtxSem = xSemaphoreCreateBinary();
+    gNoCtxRes = Modbus::Client::NODATA;
+    res = client.sendRequest(req, cbNoCtx);
+    TEST_ASSERT_EQUAL(Modbus::Client::SUCCESS, res);
+    TEST_ASSERT_EQUAL(pdTRUE, xSemaphoreTake(gNoCtxSem, pdMS_TO_TICKS(Modbus::Client::DEFAULT_REQUEST_TIMEOUT_MS + 500)));
+    TEST_ASSERT_EQUAL(Modbus::Client::ERR_TIMEOUT, gNoCtxRes);
+
+    vSemaphoreDelete(data.sem);
+    vSemaphoreDelete(gNoCtxSem);
+
+    // Resume server task
+    mbt_uart.flush_input();
+    vTaskResume(serverRxTask);
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
+
 void setup() {
     // Debug port
     Serial.setTxBufferSize(2048);
@@ -1540,6 +1647,8 @@ void setup() {
     RUN_TEST(test_invalid_parameters);
     RUN_TEST(test_broadcast_read_rejected);
     RUN_TEST(test_broadcast);
+    RUN_TEST(test_callback_success);
+    RUN_TEST(test_callback_timeout);
     // RUN_TEST(test_concurrent_calls);
     UNITY_END();
 }

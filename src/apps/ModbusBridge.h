@@ -116,7 +116,7 @@ public:
         // Configure the master interface callback to redirect to the slave
         auto resSetCbMaster = masterInterface->setRcvCallback([this](const Modbus::Frame& frame) {
             if (frame.type == Modbus::RESPONSE) { // The master interface only sends responses back to the slave
-                slaveInterface->sendFrame(frame);
+                slaveInterface->sendFrame(frame, nullptr, nullptr);
             }
         });
         if (resSetCbMaster != ModbusInterface::IInterface::SUCCESS) {
@@ -126,7 +126,7 @@ public:
         // Configure the slave interface callback to redirect to the master
         auto resSetCbSlave = slaveInterface->setRcvCallback([this](const Modbus::Frame& frame) {
             if (frame.type == Modbus::REQUEST) { // The slave interface only forwards requests to the master
-                masterInterface->sendFrame(frame);
+                masterInterface->sendFrame(frame, nullptr, nullptr);
             }
         });
         if (resSetCbSlave != ModbusInterface::IInterface::SUCCESS) {

@@ -17,20 +17,24 @@ namespace Modbus {
 void Client::PendingRequest::timeoutCallback(TimerHandle_t timer) {
     auto* pendingReq = static_cast<PendingRequest*>(pvTimerGetTimerID(timer));
     if (pendingReq && pendingReq->isActive()) {
+        // Signal transport to cleanup transaction
+        pendingReq->_client->_interface.abortCurrentTransaction();
+        
         pendingReq->setResult(ERR_TIMEOUT);
         pendingReq->clear();
         Modbus::Debug::LOG_MSG("Request timed out via timer");
     }
 }
 
-/* @brief Set the pending request
+/* @brief Set the pending request (response & tracker version)
  * @param request The request to set
  * @param response Where to store the response (response.data will be resized to match its size)
  * @param tracker Pointer to the transfer result tracker
  * @param timeoutMs Timeout in milliseconds
  * @return true if the pending request was set successfully, false is already active (clear it first)
  */
-bool Client::PendingRequest::set(const Modbus::Frame& request, Modbus::Frame* response, Result* tracker, uint32_t timeoutMs) {
+bool Client::PendingRequest::set(const Modbus::Frame& request, Modbus::Frame* response, 
+                                 Result* tracker, uint32_t timeoutMs) {
     if (isActive()) return false; // The pending request must be cleared first
     Lock guard(_mutex);
     _reqMetadata.fc = request.fc;
@@ -39,6 +43,8 @@ bool Client::PendingRequest::set(const Modbus::Frame& request, Modbus::Frame* re
     _reqMetadata.regCount = request.regCount;
     _pResponse = response;
     _tracker = tracker;
+    _cb = nullptr; 
+    _cbCtx = nullptr;
     _timestampMs = TIME_MS();
     _active = true;
     
@@ -63,6 +69,45 @@ bool Client::PendingRequest::set(const Modbus::Frame& request, Modbus::Frame* re
     return true;
 }
 
+/* @brief Set the pending request (callback version)
+ * @param request  The request to set
+ * @param cb       Callback to invoke on completion
+ * @param userCtx  User context pointer passed back to callback
+ * @param timeoutMs Timeout in milliseconds
+ * @return true if the pending request was set successfully, false if already active
+ */
+bool Client::PendingRequest::set(const Modbus::Frame& request, Client::ResponseCallback cb,
+                                 void* userCtx, uint32_t timeoutMs) {
+    if (isActive()) return false;
+    Lock guard(_mutex);
+    _reqMetadata.fc = request.fc;
+    _reqMetadata.slaveId = request.slaveId;
+    _reqMetadata.regAddress = request.regAddress;
+    _reqMetadata.regCount = request.regCount;
+    _pResponse = nullptr;     // No external response storage in callback mode
+    _tracker   = nullptr;     // Not used in callback mode
+    _cb        = cb;
+    _cbCtx     = userCtx;
+    _timestampMs = TIME_MS();
+    _active = true;
+
+    // Create / restart timeout timer
+    if (!_timeoutTimer) {
+        _timeoutTimer = xTimerCreate(
+            "ModbusTimeout",
+            pdMS_TO_TICKS(timeoutMs),
+            pdFALSE,
+            this,
+            timeoutCallback);
+    } else {
+        xTimerChangePeriod(_timeoutTimer, pdMS_TO_TICKS(timeoutMs), 0);
+    }
+    if (_timeoutTimer) {
+        xTimerStart(_timeoutTimer, 0);
+    }
+    return true;
+}
+
 /* @brief Clear the pending request
  */
 void Client::PendingRequest::clear() {
@@ -77,6 +122,9 @@ void Client::PendingRequest::clear() {
     _tracker = nullptr;
     _pResponse = nullptr;
     _timestampMs = 0;
+    _syncEventGroup = nullptr; // Clear sync waiter
+    _cb = nullptr;
+    _cbCtx = nullptr;
     _active = false;
 }
 
@@ -103,18 +151,75 @@ const Modbus::Frame& Client::PendingRequest::getRequestMetadata() const { return
 /* @brief Update the pending request result tracker
  * @param result The result to set
  */
-void Client::PendingRequest::setResult(Result result) { 
-    Lock guard(_mutex); 
-    if (_tracker) *_tracker = result; 
+void Client::PendingRequest::setResult(Result result) {
+    // Initialize callback variables to null
+    Client::ResponseCallback cbSnapshot = nullptr;
+    void* ctxSnapshot = nullptr;
+
+    // Handle result & tracker under critical section
+    { 
+        Lock guard(_mutex);
+        if (_tracker) *_tracker = result;
+        cbSnapshot = _cb;
+        ctxSnapshot = _cbCtx;
+        notifySyncWaiter(); // still inside mutex
+        if (!cbSnapshot) return; // if no callback registered, exit now
+    }
+
+    // Invoke callback outside of critical section
+    // Since we don't expect a response (failure or broadcast), we pass nullptr as response
+    cbSnapshot(result, nullptr, ctxSnapshot);
 }
 
 /* @brief Set the response for the pending request & update the result tracker
  * @param response The response to set
  */
-void Client::PendingRequest::setResponse(const Modbus::Frame& response) { 
+void Client::PendingRequest::setResponse(const Modbus::Frame& response) {
+    Client::ResponseCallback cbSnapshot = nullptr;
+    void* ctxSnapshot = nullptr;
+
+    // Handle response & tracker under critical section
+    {
+        Lock guard(_mutex);
+        if (_pResponse) *_pResponse = response;
+        if (_tracker) *_tracker = SUCCESS;
+        cbSnapshot = _cb;
+        ctxSnapshot = _cbCtx;
+        notifySyncWaiter();
+    }
+
+    // Invoke callback outside of critical section
+    if (cbSnapshot) {
+        cbSnapshot(SUCCESS, &response, ctxSnapshot);
+    }
+}
+
+/* @brief Set the event group for synchronous waiting
+ * @param group The event group handle waiting for completion
+ */
+void Client::PendingRequest::setSyncEventGroup(EventGroupHandle_t group) {
     Lock guard(_mutex);
-    if (_pResponse) *_pResponse = response;
-    if (_tracker) *_tracker = SUCCESS;
+    _syncEventGroup = group;
+}
+
+/* @brief Notify the synchronous waiting task
+ * @note This method MUST be called while holding _mutex to ensure atomicity
+ */
+void Client::PendingRequest::notifySyncWaiter() {
+    // This method should be called while holding the mutex
+    if (_syncEventGroup) {
+        xEventGroupSetBits(_syncEventGroup, SYNC_COMPLETION_BIT);
+        _syncEventGroup = nullptr;
+    }
+}
+
+/* @brief Stop the timeout timer
+ * @note Called to neutralize timer when response received
+ */
+void Client::PendingRequest::stopTimer() {
+    if (_timeoutTimer) {
+        xTimerStop(_timeoutTimer, 0);
+    }
 }
 
 /* @brief Destructor for PendingRequest - cleanup timer
@@ -132,27 +237,20 @@ Client::PendingRequest::~PendingRequest() {
 
 Client::Client(ModbusInterface::IInterface& interface, uint32_t timeoutMs) : 
     _interface(interface),
-    _pendingRequest(),
+    _pendingRequest(this),
     _requestTimeoutMs(timeoutMs),
     _isInitialized(false)
 {}
 
 Client::~Client() {
-    if (_isInitialized && _handleTxResultTaskHandle != nullptr) {
-        // Kill the cleanup task
-        vTaskDelete(_handleTxResultTaskHandle);
-        _handleTxResultTaskHandle = nullptr;
-    }
-    
     // Cleanup any active pending request
     _pendingRequest.clear();
     _isInitialized = false;
 }
 
 
-/* @brief Initialize the client & launch the pollPendingRequest task
+/* @brief Initialize the client
  * @return Success if the client was initialized successfully
- * @note Launches the pollPendingRequest task in a dedicated thread
  */
 Client::Result Client::begin() {
     if (_isInitialized) return Success();
@@ -174,20 +272,6 @@ Client::Result Client::begin() {
         return Error(ERR_INIT_FAILED, "cannot set receive callback on interface");
     }
 
-    BaseType_t txResultTaskRes = xTaskCreatePinnedToCore(
-        /*pxTaskCode*/      handleTxResultTask,
-        /*pcName*/          "ModbusClient",
-        /*usStackDepth*/    TX_RESULT_TASK_STACK_SIZE,
-        /*pvParameters*/    this,
-        /*uxPriority*/      tskIDLE_PRIORITY,
-        /*pvCreatedTask*/   &_handleTxResultTaskHandle,
-        /*xCoreID*/         tskNO_AFFINITY
-    );
-
-    if (txResultTaskRes != pdPASS) {
-        return Error(ERR_INIT_FAILED, "failed to create txResultTask");
-    }
-
     _isInitialized = true;
     return Success();
 }
@@ -200,7 +284,7 @@ bool Client::isReady() {
     return (_interface.isReady() && !_pendingRequest.isActive());
 }
 
-/* @brief Send a request to the interface
+/* @brief Send a request to the interface (synchronous or asynchronous with tracker)
  * @param request The request to send
  * @param response Where to store the response (response.data will be resized to match its size)
  * @param userTracker nullptr for blocking (sync) mode, or pointer to transfer result tracker for async mode
@@ -233,10 +317,8 @@ Client::Result Client::sendRequest(const Modbus::Frame& request,
 
     _pendingRequest.setResult(NODATA); // Update result tracker immediately
 
-    bool isBroadcast = Modbus::isBroadcastId(request.slaveId);
-
-    // Send the frame on the interface
-    auto sendRes = _interface.sendFrame(request, _handleTxResultTaskHandle);
+    // Send the frame on the interface using callback
+    auto sendRes = _interface.sendFrame(request, staticHandleTxResult, this);
     if (sendRes != ModbusInterface::IInterface::SUCCESS) {
         _pendingRequest.setResult(ERR_TX_FAILED);
         _pendingRequest.clear();
@@ -245,22 +327,85 @@ Client::Result Client::sendRequest(const Modbus::Frame& request,
 
     // ---------- Synchronous mode (userTracker == nullptr) ----------
     if (!userTracker) {
-        // Wait until the pending request finishes (response, timeout, or TX error)
-        while (_pendingRequest.isActive()) {
-            WAIT_MS(1);
+        // Create an event group for this synchronous transaction
+        EventGroupHandle_t syncEvtGrp = xEventGroupCreate();
+        if (!syncEvtGrp) {
+            _pendingRequest.setResult(ERR_TIMEOUT);
+            _pendingRequest.clear();
+            return Error(ERR_BUSY, "cannot create event group");
+        }
+
+        // Register the event group inside the pending request so that the worker can signal completion
+        _pendingRequest.setSyncEventGroup(syncEvtGrp);
+
+        // Wait for completion or timeout (response, TX error, or timeout timer)
+        EventBits_t bits = xEventGroupWaitBits(
+            syncEvtGrp,
+            SYNC_COMPLETION_BIT, // bit 0 reserved for completion
+            pdTRUE,               // clear on exit
+            pdFALSE,              // wait for any bit
+            pdMS_TO_TICKS(_requestTimeoutMs + 100) // little margin
+        );
+
+        // We're done with the event group
+        vEventGroupDelete(syncEvtGrp);
+
+        // Check if we got the expected bit (otherwise timeout)
+        if ((bits & SYNC_COMPLETION_BIT) == 0) {
+            _pendingRequest.setResult(ERR_TIMEOUT);
+            _pendingRequest.clear();
+            return Error(ERR_TIMEOUT, "sync wait timeout");
         }
 
         // The localResult variable now contains the outcome
         bool ok = (*tracker == SUCCESS);
         if (!ok) {
             // The result tracker indicates the outcome of the request
-            // (TX failure or timeout -> detected by the pollPendingRequest task)
+            // (TX failure or timeout -> detected by the timer or TX task)
             return Error(*tracker);
         }
         return Success();
     }
 
     // ---------- Asynchronous mode (userTracker != nullptr) ----------
+    return Success();
+}
+
+/* @brief Send a request (asynchronous with callback)
+ * @param request   The request to send
+ * @param cb        Callback invoked on completion
+ * @param userCtx   User context pointer (may be nullptr)
+ * @return Success if the request was queued, or error code
+ */
+Client::Result Client::sendRequest(const Modbus::Frame& request,
+                         Client::ResponseCallback cb,
+                         void* userCtx) {
+    // Reject invalid cases first
+    if (request.type != Modbus::REQUEST) {
+        return Error(ERR_INVALID_FRAME, "non-request frame");
+    }
+    auto validResult = ModbusCodec::isValidFrame(request);
+    if (validResult != ModbusCodec::SUCCESS) {
+        return Error(ERR_INVALID_FRAME, "invalid fields");
+    }
+    if (!isReady()) {
+        return Error(ERR_BUSY, "interface busy or active pending request");
+    }
+
+    // Initiate the pending request (callback mode)
+    if (!_pendingRequest.set(request, cb, userCtx, _requestTimeoutMs)) {
+        return Error(ERR_BUSY, "request already in progress");
+    }
+
+    // Send the frame on the interface using callback
+    auto sendRes = _interface.sendFrame(request, staticHandleTxResult, this);
+    if (sendRes != ModbusInterface::IInterface::SUCCESS) {
+        _pendingRequest.setResult(ERR_TX_FAILED);
+        _pendingRequest.clear();
+        return Error(ERR_TX_FAILED);
+    }
+
+    // In callback mode we just return immediately
     return Success();
 }
 
@@ -273,13 +418,16 @@ Client::Result Client::sendRequest(const Modbus::Frame& request,
  */
 void Client::handleResponse(const Modbus::Frame& response)
 {
-    // 1. Ignore if no request is in progress
+    // 1. TAKE CONTROL: Stop timer to prevent race condition
+    _pendingRequest.stopTimer();
+    
+    // 2. Check if request was still active (timer might have won)
     if (!_pendingRequest.isActive()) {
         Modbus::Debug::LOG_MSG("Received response while no request in progress, ignoring");
         return;
     }
 
-    // 2. Check if response matches the expected FC
+    // 3. Check if response matches the expected FC
     if (response.type != Modbus::RESPONSE ||
         response.fc   != _pendingRequest.getRequestMetadata().fc)
     {
@@ -287,75 +435,61 @@ void Client::handleResponse(const Modbus::Frame& response)
         return;
     }
 
-    // 3. Copy the response and re-inject the original metadata
+    // 4. Copy the response and re-inject the original metadata
     _responseBuffer.clear();
     _responseBuffer = response;
     const Modbus::Frame& req = _pendingRequest.getRequestMetadata();
     _responseBuffer.regAddress = req.regAddress;   // <- original address
     _responseBuffer.regCount   = req.regCount;     // <- actual number of registers / coils
 
-    // 4. DO NOT unpack the coils here !
+    // 5. DO NOT unpack the coils here !
     //    Keep the 125 uint16_t array as is,
     //    it will be unpacked in the user code.
 
-    // 5. Propagate the response to the user and clean up the state
+    // 6. Propagate the response to the user and clean up the state
     _pendingRequest.setResponse(_responseBuffer);
     _pendingRequest.clear();
 }
 
 
-/* @brief Wait for a notification from the RTU TX task (UART send outcome)
- * @param value The value to store the notification in
- * @param timeoutMs The timeout in milliseconds
- * @return true if a notification was received, false if timeout occured
- */
-inline bool Client::waitTaskNotification(uint32_t& value, const uint32_t timeoutMs) {
-    // Wait for a notification from the RTU TX task (UART send outcome)
-    // Copies the notification value into the arg
-    // Returns false if timeout occured
-    return xTaskNotifyWait(0, UINT32_MAX, &value, pdMS_TO_TICKS(timeoutMs)) == pdPASS;
-}
 
-/* @brief This task is used to:
- * @brief - Raise error if the TX failed
- * @brief - Properly terminate successful broadcast requests by feeding the response callback
- * @note This task is launched in a dedicated thread by the begin() method
- * @note Timeouts are now handled by FreeRTOS timers, not by this task
+/* @brief Static callback for TX result from interface layer
+ * @param result The result of the TX operation
+ * @param ctx Pointer to ModbusClient instance
+ * @note Called from interface rxTxTask context when TX operation completes
+ * @note Handles TX errors and broadcast request completion
  */
-void Client::handleTxResultTask(void* client) {
-    auto self = static_cast<Client*>(client);
-    while (true) {
-        // Role of this task:
-        // 1. Raise error if the TX failed
-        // 2. Properly terminate successful broadcast requests by feeding the response callback
-        // 3. Timeouts are now handled automatically by FreeRTOS timers
-        uint32_t value = 0;
-        // Wait for a notification from the RTU TX task (UART send outcome)
-        if (self->_pendingRequest.isActive() && self->waitTaskNotification(value)) {
-            auto sendResult = static_cast<ModbusInterface::IInterface::Result>(value);
-            // If it's a broadcast and the TX succeeded, it's the end of the request
-            bool isBroadcast = Modbus::isBroadcastId(self->_pendingRequest.getRequestMetadata().slaveId);
-            if (isBroadcast && sendResult == ModbusInterface::IInterface::SUCCESS) {
-                // We feed the user callback with a dummy frame to signal the end of the request
-                Modbus::Frame dummy = self->_pendingRequest.getRequestMetadata();
-                dummy.type = Modbus::RESPONSE;          // transfo en "réponse"
-                dummy.exceptionCode = Modbus::NULL_EXCEPTION;
-                dummy.clearData(); // make sure data is empty
-                self->_pendingRequest.setResponse(dummy);
-                self->_pendingRequest.clear();
-                continue; // rester dans la boucle de la tâche
-            }
-            // Otherwise, if the TX failed, it's an error - SUCCESS will be set by handleResponse()
-            if (sendResult != ModbusInterface::IInterface::SUCCESS) {
-                // something really went wrong at the UART/queue/encoding step
-                self->_pendingRequest.setResult(ERR_TX_FAILED);
-                self->_pendingRequest.clear();
-            }
-        }
-        
-        // Timeout is now handled by FreeRTOS timer, no manual checking needed
-        // vTaskDelay(pdMS_TO_TICKS(50));  // Longer delay since we only handle TX notifications
+void Client::staticHandleTxResult(ModbusInterface::IInterface::Result result, void* pClient) {
+    Client* client = static_cast<Client*>(pClient);
+    
+    // Ignore TX result if no request is active (might happen on late callbacks after timeout)
+    if (!client->_pendingRequest.isActive()) {
+        Modbus::Debug::LOG_MSG("Received TX result while no request in progress, ignoring");
+        return;
     }
+
+    // If the TX failed, it's an error - SUCCESS will be set by handleResponse()
+    if (result != ModbusInterface::IInterface::SUCCESS) {
+        // Something went wrong at the interface/queue/encoding step
+        client->_pendingRequest.setResult(ERR_TX_FAILED);
+        client->_pendingRequest.clear();
+        return;
+    }
+    
+    // For broadcast successful TX, we create a dummy response and complete the request
+    // (no response is expected for broadcasts)
+    if (Modbus::isBroadcastId(client->_pendingRequest.getRequestMetadata().slaveId)) {
+        // We feed the user callback with a dummy frame to signal the end of the request
+        Modbus::Frame dummy = client->_pendingRequest.getRequestMetadata();
+        dummy.type = Modbus::RESPONSE;
+        dummy.exceptionCode = Modbus::NULL_EXCEPTION;
+        dummy.clearData();
+        client->_pendingRequest.setResponse(dummy);
+        client->_pendingRequest.clear();
+        return;
+    }
+    
+    // For non-broadcast successful TX, we just wait for the response in handleResponse()
 }
 
 

@@ -19,7 +19,8 @@ RTU::RTU(ModbusHAL::UART& uart, Modbus::Role role)
       _rxEventQueue(nullptr),
       _txRequestQueue(nullptr),
       _eventQueueSet(nullptr),
-      _txBufferNotifyTask(nullptr)
+      _txResultCallback(nullptr),
+      _txCallbackCtx(nullptr)
 {
     this->_role = role; 
 }
@@ -187,15 +188,16 @@ RTU::Result RTU::setSilenceTimeBaud() {
 
 /* @brief Send a Modbus frame to the UART interface
  * @param frame: The frame to send
- * @param notifyTask: The task to notify with the result of the TX operation
+ * @param txCallback: The callback to call with the result of the TX operation
+ * @param ctx: Context pointer passed to callback
  * @return Success if the frame has been accepted & sent to the UART TX queue
  * @note This method does not wait for the frame to be sent, it just encodes it
  *       and puts it in the TX buffer. The caller must wait for the rxTxTask
  *       to send a notification with the result of the TX operation.
  */
-RTU::Result RTU::sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask) {
+RTU::Result RTU::sendFrame(const Modbus::Frame& frame, TxResultCallback txCallback, void* ctx) {
     if (!_isInitialized) {
-        notifyTaskWithResult(notifyTask, Error(ERR_NOT_INITIALIZED));
+        if (txCallback) txCallback(ERR_NOT_INITIALIZED, ctx);
         return Error(ERR_NOT_INITIALIZED, "RTU interface not initialized");
     }
 
@@ -203,17 +205,18 @@ RTU::Result RTU::sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask) 
     {
         Lock guard(_txMutex, 0); // try-lock no wait
         if (!guard.isLocked() || _txBuffer.size() != 0) {
-            notifyTaskWithResult(notifyTask, ERR_BUSY);
+            if (txCallback) txCallback(ERR_BUSY, ctx);
             return Error(ERR_BUSY, "TX already in progress");
         }
         
-        _txBufferNotifyTask = notifyTask; // Store the task to notify for rxTxTask
+        _txResultCallback = txCallback; // Store the callback for rxTxTask
+        _txCallbackCtx = ctx; // Store the context for rxTxTask
         if (_role == Modbus::MASTER && frame.type == Modbus::REQUEST) _rtt.store(); // Store the start time for master request
 
         // _txBuffer is considered free. Encode the frame.
         auto encodeResult = ModbusCodec::RTU::encode(frame, _txBuffer);
         if (encodeResult != ModbusCodec::SUCCESS) {
-            notifyTaskWithResult(notifyTask, ERR_INVALID_FRAME);
+            if (txCallback) txCallback(ERR_INVALID_FRAME, ctx);
             _txBuffer.clear(); // Don't leave the buffer in an invalid state
             return Error(ERR_INVALID_FRAME, "encoding failed");
         }
@@ -234,8 +237,9 @@ RTU::Result RTU::sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask) 
     // Signal to rxTxTask that a frame is ready in _tx_buffer_internal
     void* signal_ptr = this; // Dummy value to signal the presence of a frame
     if (xQueueSend(_txRequestQueue, &signal_ptr, 0) != pdTRUE) {
-        _txBufferNotifyTask = nullptr;
-        notifyTaskWithResult(notifyTask, Error(ERR_SEND_FAILED));
+        _txResultCallback = nullptr;
+        _txCallbackCtx = nullptr;
+        if (txCallback) txCallback(ERR_SEND_FAILED, ctx);
         return Error(ERR_SEND_FAILED, "failed to put encoded frame into TX queue");
     }
     
@@ -365,15 +369,13 @@ RTU::Result RTU::updateUartIdleDetection() {
     return Success();
 }
 
-/* @brief Notify another task with the result of the TX operation
- * @param task: The handle of the task to notify
+/* @brief Notify TX result via callback
  * @param res: The result of the TX operation
- * @note This method is called by the txProcessTask() task exclusively
+ * @note This method calls the TX callback with stored context
  */
-inline void RTU::notifyTaskWithResult(TaskHandle_t task, Result res) {
-    if (task) {
-        // eSetValueWithOverwrite remplace toujours l'ancienne notification
-        xTaskNotify(task, static_cast<uint32_t>(res), eSetValueWithOverwrite);
+inline void RTU::notifyTxResult(Result res) {
+    if (_txResultCallback) {
+        _txResultCallback(res, _txCallbackCtx);
     }
 }
 
@@ -466,7 +468,6 @@ RTU::Result RTU::handleUartEvent(const uart_event_t& event) {
  */
 RTU::Result RTU::handleTxRequest() {
     Result send_res; // Sera initialisé dans la logique ci-dessous
-    char log_buffer[128]; // Pour les messages de log formatés
 
     if (_txBuffer.size() > 0) { 
         #ifdef EZMODBUS_DEBUG
@@ -500,8 +501,9 @@ RTU::Result RTU::handleTxRequest() {
         send_res = Error(ERR_SEND_FAILED, "TX request processed but TX buffer was empty");
     }
 
-    notifyTaskWithResult(_txBufferNotifyTask, send_res);
-    _txBufferNotifyTask = nullptr; 
+    notifyTxResult(send_res);
+    _txResultCallback = nullptr; 
+    _txCallbackCtx = nullptr;
     _txBuffer.clear(); // Safe because it's locked from sendFrame() call until we clear it here
     return send_res;
 }

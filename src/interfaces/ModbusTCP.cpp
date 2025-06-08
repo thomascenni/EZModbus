@@ -131,15 +131,16 @@ TCP::Result TCP::begin() {
 
 /* @brief Send a Modbus frame to the TCP interface.
  * @param frame The frame to send.
- * @param notifyTask The task to notify with the result.
+ * @param txCallback The callback to call with the result.
+ * @param ctx Context pointer passed to callback.
  * @return SUCCESS if the frame has been accepted & sent to the HAL
  * @note This method does not wait for the frame to be sent, it just encodes it
  *       and puts it in the TX buffer. The caller must wait for the rxTxTask
  *       to send a notification with the result of the TX operation.
  */
-TCP::Result TCP::sendFrame(const Modbus::Frame &frame, TaskHandle_t notifyTask) {
+TCP::Result TCP::sendFrame(const Modbus::Frame &frame, TxResultCallback txCallback, void* ctx) {
     if (!_isInitialized) {
-        notifyTaskWithResult(notifyTask, ERR_NOT_INITIALIZED);
+        if (txCallback) txCallback(ERR_NOT_INITIALIZED, ctx);
         return Error(ERR_NOT_INITIALIZED, "TCP interface not initialized");
     }
 
@@ -147,35 +148,36 @@ TCP::Result TCP::sendFrame(const Modbus::Frame &frame, TaskHandle_t notifyTask) 
     {
         Lock guard(_txMutex, 0); // try-lock no wait
         if (!guard.isLocked() || _txBuffer.size() != 0) {
-            notifyTaskWithResult(notifyTask, ERR_BUSY);
+            if (txCallback) txCallback(ERR_BUSY, ctx);
             return Error(ERR_BUSY, "TX already in progress");
         }
 
         if (_role == Modbus::SERVER && (!_currentTransaction.active || _currentTransaction.socketNum == -1)) {
-            notifyTaskWithResult(notifyTask, ERR_SEND_FAILED);
+            if (txCallback) txCallback(ERR_SEND_FAILED, ctx);
             return Error(ERR_SEND_FAILED, "Server not in transaction");
         }
 
         uint16_t mbapTid = (_role == Modbus::CLIENT) ? getNextOutgoingTransactionId() : _currentTransaction.tid;
 
         if (ModbusCodec::TCP::encode(frame, _txBuffer, mbapTid) != ModbusCodec::SUCCESS) {
-            notifyTaskWithResult(notifyTask, ERR_INVALID_FRAME);
+            if (txCallback) txCallback(ERR_INVALID_FRAME, ctx);
             _txBuffer.clear();
             return Error(ERR_INVALID_FRAME, "encoding failed");
         }
 
         // Fill TX metadata
-        _txCtx.notifyTask  = notifyTask;
-        _txCtx.tid         = mbapTid;
-        _txCtx.destSock    = (_role == Modbus::SERVER) ? _currentTransaction.socketNum : -1;
-        _txCtx.isBroadcast = Modbus::isBroadcastId(frame.slaveId);
+        _txCtx.set(mbapTid, 
+                   (_role == Modbus::SERVER) ? _currentTransaction.socketNum : -1, 
+                   Modbus::isBroadcastId(frame.slaveId), 
+                   txCallback, 
+                   ctx);
 
         // Signal dans la TX queue (taille 1) pour réveiller rxTxTask
         void* signalPtr = this; // valeur bidon
         if(xQueueSend(_txRequestQueue, &signalPtr, 0) != pdTRUE) {
             _txBuffer.clear();
             _txCtx.clear();
-            notifyTaskWithResult(notifyTask, ERR_BUSY);
+            if (txCallback) txCallback(ERR_BUSY, ctx);
             return Error(ERR_BUSY, "TX queue full");
         }
     } // Mutex released here (end of RAII scope)
@@ -200,6 +202,17 @@ bool TCP::isReady() {
         return _tcpHAL.isClientConnected();
     } else { // SERVER
         return _tcpHAL.isServerRunning();
+    }
+}
+
+/* @brief Abort current transaction (cleanup hint from client)
+ * @note Called when client times out to allow immediate cleanup
+ */
+void TCP::abortCurrentTransaction() {
+    Lock guard(_transactionMutex, 0); // Try-lock no wait
+    if (guard.isLocked() && _currentTransaction.active) {
+        Modbus::Debug::LOG_MSG("Client timeout - aborting TCP transaction");
+        endTransaction();
     }
 }
 
@@ -355,6 +368,7 @@ TCP::Result TCP::fetchSocketData(int socketNum, ByteBuffer& rcvBuf, uint16_t& rc
     rcvBuf.clear();
 
     uint32_t t0 = TIME_MS();
+    bool firstRead = true; // First read of the event
 
     while (TIME_MS() - t0 < RX_ASSEMBLY_TIMEOUT_MS) {
         // Taille libre dans le buffer d'assemblage
@@ -383,7 +397,14 @@ TCP::Result TCP::fetchSocketData(int socketNum, ByteBuffer& rcvBuf, uint16_t& rc
         } else if (n == 0) {
             // No bytes received, revert to previous size to avoid growing indefinitely
             rcvBuf.trim(currentSize);
+            
+            // If we get no data on the first read, we have already consumed the data for this event
+            if (firstRead) {
+                return Error(NODATA, "event data already consumed");
+            }
         }
+        
+        firstRead = false;
 
         // Try to decode if we have at least the MBAP header (7 bytes)
         if (rcvBuf.size() >= 7) {
@@ -420,7 +441,8 @@ TCP::Result TCP::fetchSocketData(int socketNum, ByteBuffer& rcvBuf, uint16_t& rc
  * Returns the Result that will be notified to the waiting task (SUCCESS, ERR_SEND_FAILED, ...)
  */
 TCP::Result TCP::handleTxRequest() {
-    TaskHandle_t notifyTask = nullptr;
+    TxResultCallback txCallback = nullptr;
+    void* ctx = nullptr;
 
     int actualSock = -1;
     uint16_t tid = 0;
@@ -436,16 +458,20 @@ TCP::Result TCP::handleTxRequest() {
         size_t len = _txBuffer.size();
         int destSock = _txCtx.destSock;
 
-        // Fetch metadata for processing TX result
-        notifyTask = _txCtx.notifyTask;
+        // Fetch metadata for processing TX result outside of this scope
+        txCallback = _txCtx.txCallback;
+        ctx = _txCtx.ctx;
         tid = _txCtx.tid;
         isBroadcast = _txCtx.isBroadcast;
 
         if (len == 0) {
             // No data to send – this should not happen
-            _txCtx.clear();
             _txBuffer.clear();
-            notifyTaskWithResult(notifyTask, ERR_SEND_FAILED);
+            _txCtx.clear();
+            // Notify outside mutex
+            if (txCallback) {
+                txCallback(ERR_SEND_FAILED, ctx);
+            }
             return Error(ERR_SEND_FAILED, "no data to send");
         }
 
@@ -459,19 +485,19 @@ TCP::Result TCP::handleTxRequest() {
     } // Mutex released here (end of RAII scope)
 
     if (!sendMsgRes) {
-        notifyTaskWithResult(notifyTask, ERR_SEND_FAILED);
+        if (txCallback) txCallback(ERR_SEND_FAILED, ctx);
         return Error(ERR_SEND_FAILED, "HAL returned failure to send message");
     }
 
     if (_role == Modbus::CLIENT && !isBroadcast) {
         // Check if HAL returned a valid socket
         if (actualSock == -1) {
-            notifyTaskWithResult(notifyTask, ERR_SEND_FAILED);
+            if (txCallback) txCallback(ERR_SEND_FAILED, ctx);
             return Error(ERR_SEND_FAILED, "invalid current socket returned by HAL");
         }
         // Start the transaction
         if (!beginTransaction(actualSock, tid)) {
-            notifyTaskWithResult(notifyTask, ERR_BUSY);
+            if (txCallback) txCallback(ERR_BUSY, ctx);
             return Error(ERR_BUSY, "cannot start transaction");
         }
     } else {
@@ -479,22 +505,10 @@ TCP::Result TCP::handleTxRequest() {
         endTransaction();
     }
 
-    notifyTaskWithResult(notifyTask, SUCCESS);
+    if (txCallback) txCallback(SUCCESS, ctx);
     return Success();
 }
 
-
-/* @brief Notify another task with the result of the TX operation
- * @param t The task to notify
- * @param res The result to notify
- */
-inline void TCP::notifyTaskWithResult(TaskHandle_t t, Result res) {
-    if (t) {
-        xTaskNotify(t,
-                    static_cast<uint32_t>(res),
-                    eSetValueWithOverwrite);
-    }
-}
 
 /* @brief Get the next outgoing transaction ID
  * @return The next outgoing transaction ID
@@ -581,7 +595,7 @@ void TCP::rxTxTask(void* tcp) {
         // ----------- Transaction timeout -----------
         if (self->_currentTransaction.active) {
             uint32_t now = TIME_MS();
-            if (now - self->_currentTransaction.startMs > TCP_TRANSACTION_TIMEOUT_MS) {
+            if (now - self->_currentTransaction.startMs > TCP_TRANSACTION_SAFETY_TIMEOUT_MS) {
                 Modbus::Debug::LOG_MSGF("Transaction timeout on socket %d TID: %d", self->_currentTransaction.socketNum, self->_currentTransaction.tid);
                 self->endTransaction();
             }

@@ -24,9 +24,10 @@ public:
     Result begin() override { return Result::SUCCESS; }
     
     // Method from the abstract class
-    Result sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask = nullptr) override { 
+    Result sendFrame(const Modbus::Frame& frame, TxResultCallback txCallback, void* ctx) override { 
         Modbus::Debug::LOG_FRAME(frame, "Received frame from bridge");
         rcvFrames.push(frame);
+        if (txCallback) txCallback(Result::SUCCESS, ctx);
         return Result::SUCCESS; 
     }
     

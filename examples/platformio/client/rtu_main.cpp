@@ -67,9 +67,6 @@ void setup() {
         Serial.println("Failed to initialize Modbus Client");
         while (1) { delay(1000); } // Halt
     }
-
-    // Set silence time
-    interface.setSilenceTimeBaud(9600);
     
     Serial.println("Modbus client initialized");
 
@@ -126,7 +123,7 @@ void readTemperature_Sync() {
     };
     
     // Send request and wait for response 
-    // (tracker not provided -> blocks until response received or timeout)
+    // (tracker not provided -> waits until response received or timeout)
     Modbus::Frame tempResponse;
     auto result = client.sendRequest(tempRequest, tempResponse);
 
@@ -227,7 +224,7 @@ void readSetpoints_Sync() {
     };
     
     // Send request and wait for response
-    // (tracker not provided -> blocks until response received or timeout)
+    // (tracker not provided -> waits until response received or timeout)
     Modbus::Frame response;
     auto result = client.sendRequest(request, response);
 
@@ -259,61 +256,54 @@ void readSetpoints_Sync() {
 }
 
 /**
- * Example 4: Asynchronous write of setpoints
+ * Example 4: Asynchronous write of setpoints using the callback API
  */
 void writeSetpoints_Async() {
-    Serial.println("Writing temperature and humidity setpoints...");
-    
-    // Create frame to write multiple holding registers
+    Serial.println("Writing temperature and humidity setpoints (callback mode)...");
+
+    // Two variables that we want to update from the callback
+    static uint32_t totalUpdates = 0;
+    static uint32_t lastUpdateTime = 0;
+
+    // Build frame to write both setpoints (22.5 °C & 45 % RH)
     Modbus::Frame request = {
-        .type = Modbus::REQUEST,
-        .fc = Modbus::WRITE_MULTIPLE_REGISTERS,
-        .slaveId = THERMOSTAT_SLAVE_ID,
+        .type       = Modbus::REQUEST,
+        .fc         = Modbus::WRITE_MULTIPLE_REGISTERS,
+        .slaveId    = THERMOSTAT_SLAVE_ID,
         .regAddress = REG_TEMPERATURE_SETPOINT,
-        .regCount = 2,  // Write both temperature and humidity setpoints
-        .data = Modbus::packRegisters({ 225, 450 })  // temp = 22.5°C, humidity = 45%
+        .regCount   = 2,
+        .data       = Modbus::packRegisters({225, 450})
     };
-    
-    // Create frame for response and status tracker
-    Modbus::Frame response;
-    ModbusClient::Result tracker;
-    
-    // Send request asynchronously
-    // (tracker provided -> returns immediately after transfer started)
-    auto result = client.sendRequest(request, response, &tracker);
-    
-    if (result != ModbusClient::SUCCESS) {
-        Serial.print("Failed to start setpoint write: ");
-        Serial.println(ModbusClient::toString(result));
-        return;
-    }
-    
-    Serial.println("Setpoint write request sent. Waiting for completion...");
-    
-    // Wait for the request to complete
-    // (usually this is done in another task/function)
-    uint32_t startTime = millis();
-    while (tracker == ModbusClient::NODATA) {
-        // Timeout after 2 seconds (safety, should be already handled by the ModbusClient)
-        if (millis() - startTime > 2000) {
-            Serial.println("Waiting for response timed out");
-            return;
+
+    // Simple context shared with the callback
+    struct CbCtx { 
+        uint32_t& nb = totalUpdates;
+        uint32_t& time = lastUpdateTime;
+    } ctx;
+
+    // Static, non-capturing lambda -> decays to a function pointer
+    static auto cb = [](ModbusClient::Result res, const Modbus::Frame* resp, void* ctx) {
+        auto* c = static_cast<CbCtx*>(ctx);
+
+        if (res == ModbusClient::SUCCESS && resp && resp->exceptionCode == Modbus::NULL_EXCEPTION) {
+            Serial.println("Callback: write SUCCESS!");
+        } else {
+            Serial.printf("Callback: write FAILED (%s)\n", ModbusClient::toString(res));
         }
-        delay(1);
-    }
-    
-    // Check if the request was successful
-    if (tracker != ModbusClient::SUCCESS) {
-        Serial.printf("Failed to start setpoint write: %s\n", ModbusClient::toString(tracker));
+        
+        if (c) {
+            c->nb++;
+            c->time = millis();
+        }
+    };
+
+    // Launch request (returns immediately)
+    auto result = client.sendRequest(request, cb, &ctx);
+    if (result != ModbusClient::SUCCESS) {
+        Serial.printf("Failed to queue write request: %s\n", ModbusClient::toString(result));
         return;
     }
 
-    // Check if the response has an exception
-    if (response.exceptionCode != Modbus::NULL_EXCEPTION) {
-        Serial.printf("Modbus exception writing setpoints: %s\n", Modbus::toString(response.exceptionCode));
-        return;
-    }
-
-    // Print the result
-    Serial.println("Setpoint write complete! Temperature set to 22.5°C, Humidity set to 45%");
+    // Fire & forget: no need to wait for the request to complete!
+    // The callback will handle everything in the background
 }

@@ -112,6 +112,12 @@ public:
         return SUCCESS;
     }
 
+    /* @brief TX result callback type
+     * @param result The result of the TX operation
+     * @param ctx Internal context pointer
+     * @note Called from rxTxTask context when TX operation completes
+     */
+    using TxResultCallback = void (*)(Result result, void* ctx);
 
     virtual ~IInterface() = default;
     
@@ -120,18 +126,25 @@ public:
      */
     virtual Result begin() = 0;
 
-    /* @brief Send a frame, with optional callback and/or tracker
+    /* @brief Send a frame with TX callback
      * @param frame The frame to send
-     * @param callback The callback to call when the response is received
-     * @param tracker The tracker to follow up the status of the request by the caller
+     * @param txCallback Callback to call when TX completes (optional)
+     * @param ctx Internal context pointer passed to callback (optional)
      * @return The result of the operation
      */
-    virtual Result sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask = nullptr) = 0;
+    virtual Result sendFrame(const Modbus::Frame& frame, 
+                             TxResultCallback txCallback = nullptr, void* ctx = nullptr) = 0;
 
     /* @brief Check if the interface is ready to transmit a frame
      * @return true if the interface is ready, false otherwise
      */
     virtual bool isReady() = 0;
+    
+    /* @brief Abort current transaction (cleanup hint from client)
+     * @note Called when client times out to allow transport cleanup
+     * @note Default implementation is no-op for stateless transports
+     */
+    virtual void abortCurrentTransaction() {};
 
     /* @brief Get the role of the interface
      * @return The role of the interface

@@ -13,7 +13,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "apps/ModbusClient.h" // To get the default request timeout
 
 namespace ModbusInterface {
 
@@ -26,9 +25,8 @@ public:
 
     static constexpr uint32_t RX_ASSEMBLY_TIMEOUT_MS = 50;
     static constexpr uint32_t RXTX_QUEUE_CHECK_TIMEOUT_MS = 100; // Added for task management
-    // Transaction timeout : take client txn timeout - 50 ms
-    static constexpr uint32_t TCP_TRANSACTION_TIMEOUT_MS = std::max((uint32_t)50, 
-                                                                Modbus::Client::DEFAULT_REQUEST_TIMEOUT_MS - (uint32_t)50);
+    // Safety timeout - much longer than client timeout for emergency cleanup
+    static constexpr uint32_t TCP_TRANSACTION_SAFETY_TIMEOUT_MS = 5000;
 
     // Tasks stack sizes (higher for debug to let room for the printf/hexdump buffers)
     #ifdef EZMODBUS_DEBUG
@@ -60,15 +58,17 @@ public:
         uint16_t tid = 0;
         int destSock = -1;
         bool isBroadcast = false;
-        TaskHandle_t notifyTask = nullptr;
+        TxResultCallback txCallback = nullptr;
+        void* ctx = nullptr;
 
-        void set(uint16_t tid, int socketNum, bool isBroadcast = false, TaskHandle_t notifyTask = nullptr) { 
+        void set(uint16_t tid, int socketNum, bool isBroadcast = false, TxResultCallback txCallback = nullptr, void* ctx = nullptr) { 
             this->tid = tid; 
             this->destSock = socketNum; 
             this->isBroadcast = isBroadcast; 
-            this->notifyTask = notifyTask; 
+            this->txCallback = txCallback;
+            this->ctx = ctx;
         }
-        void clear() { tid=0; destSock=-1; isBroadcast=false; notifyTask=nullptr; }
+        void clear() { tid=0; destSock=-1; isBroadcast=false; txCallback=nullptr; ctx=nullptr; }
     };
 
     // ===================================================================================
@@ -79,8 +79,9 @@ public:
     virtual ~TCP();
 
     Result begin() override;
-    Result sendFrame(const Modbus::Frame &frame, TaskHandle_t notifyTask = nullptr) override;
+    Result sendFrame(const Modbus::Frame &frame, TxResultCallback txCallback, void* ctx) override;
     bool isReady() override;
+    void abortCurrentTransaction() override;
     TaskHandle_t getRxTxTaskHandle();
 
 private:
@@ -105,6 +106,9 @@ private:
     Mutex _transactionMutex;
 
     // Data processing
+    // _rxEventQueue: receives RX events from HAL
+    // _txRequestQueue: just a dummy signaling queue so that we can use xQueueSet 
+    // to wait for both RX and TX without wasting CPU
     QueueHandle_t _rxEventQueue = nullptr;
     QueueHandle_t _txRequestQueue = nullptr;
     QueueSetHandle_t _eventQueueSet = nullptr;
@@ -124,7 +128,6 @@ private:
 
     // TX frame processing
     Result handleTxRequest();
-    inline void notifyTaskWithResult(TaskHandle_t t, Result res);
 
     // Transaction management
     uint16_t getNextOutgoingTransactionId();

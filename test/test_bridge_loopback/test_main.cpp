@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <unity.h>
 #include <EZModbus.h>
 #include "test_params.h"

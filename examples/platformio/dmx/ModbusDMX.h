@@ -28,13 +28,13 @@ public:
     using Result = IInterface::Result;
 
     /**
-     * @brief Construct with IDF UART port and pins for DMX master
+     * @brief Construct with Arduino Serial port and pins for DMX master
      */
-    ModbusDMX(uart_port_t uart_num = UART_NUM_1,
+    ModbusDMX(Stream* serial = &Serial1,
               int txPin = 17,
               int rxPin = 16,
               int dePin = -1)
-        : _dmx(EZDMX::Mode::MASTER, uart_num, txPin, rxPin, dePin) {
+        : _dmx(EZDMX::Mode::MASTER, serial, txPin, rxPin, dePin) {
         _role = Modbus::MASTER;
     }
 
@@ -56,7 +56,7 @@ public:
     /**
      * @brief Process incoming Modbus request frames
      */
-    Result sendFrame(const Modbus::Frame& frame) override {
+    Result sendFrame(const Modbus::Frame& frame, TaskHandle_t notifyTask = nullptr) override {
         // Only handle requests
         if (frame.type != Modbus::REQUEST) {
             return Success();
@@ -126,13 +126,6 @@ public:
             default:
                 return Error(ERR_INVALID_MSG_TYPE);
         }
-        return Success();
-    }
-
-    /**
-     * @brief No periodic polling required
-     */
-    Result poll() override {
         return Success();
     }
 

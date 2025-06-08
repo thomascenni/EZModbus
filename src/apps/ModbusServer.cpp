@@ -63,9 +63,7 @@ Server::Result Server::begin() {
  */
 Server::Result Server::setRegisterCount(const Modbus::RegisterType type, const uint16_t count) {
     if (count > MAX_REGISTERS) {
-        char errBuf[64];
-        snprintf(errBuf, sizeof(errBuf), "Cannot reserve more than %lu registers", (unsigned long)MAX_REGISTERS);
-        return Error(Server::ERR_REG_OVERFLOW, errBuf);
+        return Error(Server::ERR_REG_OVERFLOW, "Cannot reserve more than 65535 registers");
     }
 
     Lock guard(_registerStoreMutex);
@@ -90,9 +88,8 @@ Server::Result Server::addRegister(const Server::Register& reg) {
     Server::Result res = isValidEntry(reg);
     if (res != Server::SUCCESS) {
         // Print error message: "<ERROR_CODE> : <reg.type> <reg.address>"
-        char errBuf[64];
-        snprintf(errBuf, sizeof(errBuf), "%s %d", Modbus::toString(reg.type), reg.address);
-        return Error(res, errBuf);
+        Modbus::Debug::LOG_MSGF("Error (%s) : %s %d", toString(res), Modbus::toString(reg.type), reg.address);
+        return Error(res, "failed to add register");
     }
 
     // Check overflow only if register does not already exist
@@ -121,9 +118,8 @@ Server::Result Server::addRegisters(const std::vector<Server::Register>& registe
         Server::Result res = isValidEntry(reg);
         if (res != Server::SUCCESS) {
             // Print error message: "<ERROR_CODE> : <reg.type> <reg.address>"
-            char errBuf[64];
-            snprintf(errBuf, sizeof(errBuf), "%s %d", Modbus::toString(reg.type), reg.address);
-            return Error(res, errBuf);
+            Modbus::Debug::LOG_MSGF("Error (%s) : %s %d", toString(res), Modbus::toString(reg.type), reg.address);
+            return Error(res, "failed to add register");
         }
 
         if (!registerExists(reg)) {
@@ -382,65 +378,64 @@ Server::Result Server::handleRequest(const Modbus::Frame& request) {
     Modbus::Frame response;
 
     { // _handleRequestMutex scope
-    Lock guard(_handleRequestMutex);
-    if (!guard.isLocked()) {
-        // A request is already being processed, ignore this one
-        return Error(Server::ERR_RCV_BUSY);
-    }
+        Lock guard(_handleRequestMutex);
+        if (!guard.isLocked()) {
+            // A request is already being processed, ignore this one
+            return Error(Server::ERR_RCV_BUSY);
+        }
 
-    // Ignore the Slave ID if the request is sent to a broadcast slave ID
-    // or if the server is configured to catch all requests (broadcast mode or TCP server)
-    bool catchAllMode = Modbus::isBroadcastId(_serverId) || _interface.checkCatchAllSlaveIds();
-    bool broadcastRequest = Modbus::isBroadcastId(request.slaveId);
-    dropResponse = broadcastRequest;  // We don't respond to broadcast requests
-    bool dropRequest = !catchAllMode 
-                        && (request.slaveId != _serverId)
-                        && !broadcastRequest; // We drop requests not addressed to us
+        // Ignore the Slave ID if the request is sent to a broadcast slave ID
+        // or if the server is configured to catch all requests (broadcast mode or TCP server)
+        bool catchAllMode = Modbus::isBroadcastId(_serverId) || _interface.checkCatchAllSlaveIds();
+        bool broadcastRequest = Modbus::isBroadcastId(request.slaveId);
+        dropResponse = broadcastRequest;  // We don't respond to broadcast requests
+        bool dropRequest = !catchAllMode 
+                            && (request.slaveId != _serverId)
+                            && !broadcastRequest; // We drop requests not addressed to us
 
-    // We ignore requests not addressed to us & unsolicited responses
-    if (dropRequest) return Error(Server::ERR_RCV_WRONG_SLAVE_ID);
-    if (request.type != Modbus::REQUEST) return Error(Server::ERR_RCV_INVALID_TYPE);
+        // We ignore requests not addressed to us & unsolicited responses
+        if (dropRequest) return Error(Server::ERR_RCV_WRONG_SLAVE_ID);
+        if (request.type != Modbus::REQUEST) return Error(Server::ERR_RCV_INVALID_TYPE);
 
-    // Reject read requests in broadcast mode according to Modbus spec
-    bool isWrite = (request.fc == Modbus::WRITE_REGISTER || 
-                    request.fc == Modbus::WRITE_MULTIPLE_REGISTERS ||
-                    request.fc == Modbus::WRITE_COIL ||
-                    request.fc == Modbus::WRITE_MULTIPLE_COILS);
-    if (broadcastRequest && !isWrite) {
-        return Error(Server::ERR_RCV_ILLEGAL_FUNCTION);
-    }
+        // Reject read requests in broadcast mode according to Modbus spec
+        bool isWrite = (request.fc == Modbus::WRITE_REGISTER || 
+                        request.fc == Modbus::WRITE_MULTIPLE_REGISTERS ||
+                        request.fc == Modbus::WRITE_COIL ||
+                        request.fc == Modbus::WRITE_MULTIPLE_COILS);
+        if (broadcastRequest && !isWrite) {
+            return Error(Server::ERR_RCV_ILLEGAL_FUNCTION);
+        }
 
-    // Prepare the response
-    response.type = Modbus::RESPONSE;
-    response.fc = request.fc;
-    response.slaveId = request.slaveId;
-    response.regAddress = request.regAddress;
-    response.regCount = request.regCount;
-    response.clearData();
-    response.exceptionCode = Modbus::NULL_EXCEPTION;
+        // Prepare the response
+        response.type = Modbus::RESPONSE;
+        response.fc = request.fc;
+        response.slaveId = request.slaveId;
+        response.regAddress = request.regAddress;
+        response.regCount = request.regCount;
+        response.clearData();
+        response.exceptionCode = Modbus::NULL_EXCEPTION;
 
-    // Check that the function code is valid
-    if (!ModbusCodec::isValidFunctionCode(static_cast<uint8_t>(request.fc))) {
-        response.exceptionCode = Modbus::ILLEGAL_FUNCTION;
-        if (!dropResponse) _interface.sendFrame(response);
-        return Error(Server::ERR_RCV_ILLEGAL_FUNCTION);
-    }
+        // Check that the function code is valid
+        if (!ModbusCodec::isValidFunctionCode(static_cast<uint8_t>(request.fc))) {
+            response.exceptionCode = Modbus::ILLEGAL_FUNCTION;
+            if (!dropResponse) _interface.sendFrame(response, nullptr, nullptr);
+            return Error(Server::ERR_RCV_ILLEGAL_FUNCTION);
+        }
 
-    // Find the appropriate register map
-    auto* regStore = findRegisterStore(request.fc);
-    if (!regStore) {
-        response.exceptionCode = Modbus::ILLEGAL_FUNCTION;
-        if (!dropResponse) _interface.sendFrame(response);
-        return Error(Server::ERR_RCV_ILLEGAL_FUNCTION);
-    }
+        // Find the appropriate register map
+        auto* regStore = findRegisterStore(request.fc);
+        if (!regStore) {
+            response.exceptionCode = Modbus::ILLEGAL_FUNCTION;
+            if (!dropResponse) _interface.sendFrame(response, nullptr, nullptr);
+            return Error(Server::ERR_RCV_ILLEGAL_FUNCTION);
+        }
 
-    // Process the request based on whether it's a read or write
-    if (isWrite) {
-        handleWrite(request, response, regStore);
-    } else {
-        handleRead(request, response, regStore);
-    }
-
+        // Process the request based on whether it's a read or write
+        if (isWrite) {
+            handleWrite(request, response, regStore);
+        } else {
+            handleRead(request, response, regStore);
+        }
     } // _handleRequestMutex scope
 
     // Send the response (unless broadcast)
@@ -488,9 +483,11 @@ Server::Result Server::handleRead(const Modbus::Frame& request, Modbus::Frame& r
 
     // Special case for coils and discrete inputs: pack bits
     if (request.fc == Modbus::READ_COILS || request.fc == Modbus::READ_DISCRETE_INPUTS) {
-        // 1) gather coil values as bools
-        std::vector<bool> bits;
-        bits.reserve(request.regCount);
+        // Clear response data first
+        response.clearData();
+        
+        // Pack bits directly into response.data to avoid dynamic allocation
+        // Each uint16_t can hold 16 bits, so we pack 16 coils at a time
         for (uint16_t i = 0; i < request.regCount; ++i) {
             auto entry = findRegisterEntry(regStore, request.regAddress + i);
             bool val = false;
@@ -500,11 +497,17 @@ Server::Result Server::handleRead(const Modbus::Frame& request, Modbus::Frame& r
                     val = cb(entry->toRegister(this)) != 0;
                 }
             }
-            bits.push_back(val);
+            
+            // Pack bit into response.data
+            if (val) {
+                size_t wordIdx = i / 16;
+                size_t bitPos = i % 16;
+                if (wordIdx < Modbus::FRAME_DATASIZE) {
+                    response.data[wordIdx] |= (1u << bitPos);
+                }
+            }
         }
         
-        // 2) pack into response.data
-        response.data = Modbus::packCoils(bits);
         return Success();
     }
 
@@ -617,7 +620,7 @@ Server::Result Server::handleWrite(const Modbus::Frame& request, Modbus::Frame& 
 }
 
 Server::Result Server::sendResponse(const Modbus::Frame& response) {
-    auto sendResult = _interface.sendFrame(response);
+    auto sendResult = _interface.sendFrame(response, nullptr, nullptr);
     if (sendResult != ModbusInterface::IInterface::SUCCESS) {
         return Error(Server::ERR_RSP_TX_FAILED);
     }
