@@ -59,58 +59,64 @@ void clientTask(void *pvParameters) {
     uint16_t valueToWrite = 0;
 
     while (1) {
-        if (modbusClient.isReady()) {
-            Modbus::Frame readRequest;
-            readRequest.type = Modbus::REQUEST;
-            readRequest.fc = Modbus::READ_HOLDING_REGISTERS;
-            readRequest.slaveId = SERVER_SLAVE_ID;
-            readRequest.regAddress = TARGET_REGISTER;
-            readRequest.regCount = 1;
-
-            Modbus::Frame readResponse;
-            ESP_LOGI(TAG_CLIENT_TASK, "Sending READ request for register %u...", TARGET_REGISTER);
-            ModbusClient::Result readResult = modbusClient.sendRequest(readRequest, readResponse);
-
-            if (readResult == ModbusClient::SUCCESS) {
-                if (readResponse.exceptionCode == Modbus::NULL_EXCEPTION) {
-                    uint16_t receivedValue = readResponse.getRegister(0);
-                    ESP_LOGI(TAG_CLIENT_TASK, "READ response: Register %u = %u", TARGET_REGISTER, receivedValue);
-
-                    valueToWrite = receivedValue + 1;
-                    Modbus::Frame writeRequest;
-                    writeRequest.type = Modbus::REQUEST;
-                    writeRequest.fc = Modbus::WRITE_REGISTER;
-                    writeRequest.slaveId = SERVER_SLAVE_ID;
-                    writeRequest.regAddress = TARGET_REGISTER;
-                    writeRequest.regCount = 1;
-                    writeRequest.setRegisters({valueToWrite});
-
-                    Modbus::Frame writeResponse;
-                    ESP_LOGI(TAG_CLIENT_TASK, "Sending WRITE request for register %u with value %u...", TARGET_REGISTER, valueToWrite);
-                    ModbusClient::Result writeResult = modbusClient.sendRequest(writeRequest, writeResponse);
-
-                    if (writeResult == ModbusClient::SUCCESS) {
-                        if (writeResponse.exceptionCode == Modbus::NULL_EXCEPTION) {
-                            ESP_LOGI(TAG_CLIENT_TASK, "WRITE response: Success (Echo Addr: %u, Val: %u)",
-                                     writeResponse.regAddress, writeResponse.getRegister(0));
-                        } else {
-                            ESP_LOGE(TAG_CLIENT_TASK, "Modbus Exception on WRITE: %s (0x%02X)",
-                                     Modbus::toString(writeResponse.exceptionCode), writeResponse.exceptionCode);
-                        }
-                    } else {
-                        ESP_LOGE(TAG_CLIENT_TASK, "Error on sendRequest (WRITE): %s", ModbusClient::toString(writeResult));
-                    }
-                } else {
-                    ESP_LOGE(TAG_CLIENT_TASK, "Modbus Exception on READ: %s (0x%02X)",
-                             Modbus::toString(readResponse.exceptionCode), readResponse.exceptionCode);
-                }
-            } else {
-                ESP_LOGE(TAG_CLIENT_TASK, "Error on sendRequest (READ): %s", ModbusClient::toString(readResult));
-            }
-        } else {
-            ESP_LOGW(TAG_CLIENT_TASK, "Modbus client not ready.");
-        }
         vTaskDelay(pdMS_TO_TICKS(CLIENT_POLL_INTERVAL_MS));
+
+        if (!modbusClient.isReady()) {
+            ESP_LOGW(TAG_CLIENT_TASK, "Modbus client not ready.");
+            continue;
+        }
+
+        Modbus::Frame readRequest;
+        readRequest.type = Modbus::REQUEST;
+        readRequest.fc = Modbus::READ_HOLDING_REGISTERS;
+        readRequest.slaveId = SERVER_SLAVE_ID;
+        readRequest.regAddress = TARGET_REGISTER;
+        readRequest.regCount = 1;
+
+        Modbus::Frame readResponse;
+        ESP_LOGI(TAG_CLIENT_TASK, "Sending READ request for register %u...", TARGET_REGISTER);
+        ModbusClient::Result readResult = modbusClient.sendRequest(readRequest, readResponse);
+
+        if (readResult != ModbusClient::SUCCESS) {
+            ESP_LOGE(TAG_CLIENT_TASK, "Error on sendRequest (READ): %s", ModbusClient::toString(readResult));
+            continue;
+        }
+
+        if (readResponse.exceptionCode != Modbus::NULL_EXCEPTION) {
+            ESP_LOGE(TAG_CLIENT_TASK, "Modbus Exception on READ: %s (0x%02X)",
+                     Modbus::toString(readResponse.exceptionCode), readResponse.exceptionCode);
+            continue;
+        }
+
+        uint16_t receivedValue = readResponse.getRegister(0);
+        ESP_LOGI(TAG_CLIENT_TASK, "READ response: Register %u = %u", TARGET_REGISTER, receivedValue);
+
+        valueToWrite = receivedValue + 1;
+        Modbus::Frame writeRequest;
+        writeRequest.type = Modbus::REQUEST;
+        writeRequest.fc = Modbus::WRITE_REGISTER;
+        writeRequest.slaveId = SERVER_SLAVE_ID;
+        writeRequest.regAddress = TARGET_REGISTER;
+        writeRequest.regCount = 1;
+        writeRequest.setRegisters({valueToWrite});
+
+        Modbus::Frame writeResponse;
+        ESP_LOGI(TAG_CLIENT_TASK, "Sending WRITE request for register %u with value %u...", TARGET_REGISTER, valueToWrite);
+        ModbusClient::Result writeResult = modbusClient.sendRequest(writeRequest, writeResponse);
+
+        if (writeResult != ModbusClient::SUCCESS) {
+            ESP_LOGE(TAG_CLIENT_TASK, "Error on sendRequest (WRITE): %s", ModbusClient::toString(writeResult));
+            continue;
+        }
+
+        if (writeResponse.exceptionCode != Modbus::NULL_EXCEPTION) {
+            ESP_LOGE(TAG_CLIENT_TASK, "Modbus Exception on WRITE: %s (0x%02X)",
+                     Modbus::toString(writeResponse.exceptionCode), writeResponse.exceptionCode);
+            continue;
+        }
+
+        ESP_LOGI(TAG_CLIENT_TASK, "WRITE response: Success (Echo Addr: %u, Val: %u)",
+                 writeResponse.regAddress, writeResponse.getRegister(0));
     }
 }
 
