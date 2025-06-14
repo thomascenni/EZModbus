@@ -134,8 +134,9 @@ private:
         uint32_t _timestampMs = 0;               // Timestamp of request creation
         volatile bool _active = false;           // Whether the request is active
         Mutex _mutex;                            // Mutex to protect the pending request data
-        TimerHandle_t _timeoutTimer = nullptr;   // Timer for request timeout
-        EventGroupHandle_t _syncEventGroup = nullptr; // Event group for synchronous wait (sync mode)
+        StaticTimer_t _timeoutTimerBuf;          // Timer buffer for request timeout
+        TimerHandle_t _timeoutTimer = nullptr;   // Timer handle for request timeout
+        EventGroupHandle_t _syncEventGroup = nullptr; // Event group handle for synchronous wait (sync mode)
 
     public:
         // Constructor
@@ -173,7 +174,8 @@ private:
     PendingRequest _pendingRequest;
     Modbus::Frame _responseBuffer;
     bool _isInitialized = false;
-
+    StaticEventGroup_t _syncEventGroupBuf;        // Event group buffer for synchronous wait (sync mode)
+    
     // ===================================================================================
     // PRIVATE METHODS
     // ===================================================================================

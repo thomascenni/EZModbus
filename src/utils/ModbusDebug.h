@@ -23,6 +23,9 @@ struct CallCtx {
         : file(f), function(func), line(l) {}
 };
 
+/* @brief Maximum size for a formatted debug message (including null terminator) */
+constexpr std::size_t MAX_DEBUG_MSG_SIZE = 512;
+
 } // namespace Debug
 } // namespace Modbus
 
@@ -58,18 +61,20 @@ static const char* getBasename(const char* path) {
  */
 template<typename... Args>
 inline void LOG_MSGF_impl(CallCtx ctx, const char* format, Args&&... args) {
-    // Calculate needed buffer size
-    int needed = snprintf(nullptr, 0, format, args...);
-    if (needed <= 0) return;
-    
-    // Allocate and format the message
-    std::vector<char> buffer(needed + 1);
-    snprintf(buffer.data(), buffer.size(), format, std::forward<Args>(args)...);
-    
-    // Log with context information (Logger::logf handles newline normalization)
-    Modbus::Logger::logf("[%s::%s:%d] %s", 
-                        getBasename(ctx.file), ctx.function, ctx.line,
-                        buffer.data());
+    // Format directly into a fixed-size stack buffer and truncate if necessary
+    char buffer[MAX_DEBUG_MSG_SIZE];
+
+    // snprintf guarantees null-termination if buffer size > 0
+    int written = snprintf(buffer, sizeof(buffer), format, std::forward<Args>(args)...);
+    if (written < 0) return; // snprintf error
+
+    // Determine suffix to indicate truncation if needed
+    const char* suffix = (written >= static_cast<int>(sizeof(buffer))) ? " ..." : "";
+
+    // Single logf call with context information
+    Modbus::Logger::logf("[%s::%s:%d] %s%s",
+                         getBasename(ctx.file), ctx.function, ctx.line,
+                         buffer, suffix);
 }
 
 // Macro to automatically capture call context

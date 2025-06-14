@@ -27,7 +27,7 @@ public:
     #ifdef EZMODBUS_DEBUG
         static constexpr uint32_t RXTX_TASK_STACK_SIZE = 4096;
     #else
-        static constexpr uint32_t RXTX_TASK_STACK_SIZE = 4096;
+        static constexpr uint32_t RXTX_TASK_STACK_SIZE = 2048;
     #endif
 
     // ===================================================================================
@@ -104,12 +104,15 @@ private:
     void* _txCallbackCtx; // Stores context for TX callback
     
     // Data processing
-    // _rxEventQueue: receives RX events from HAL
+    // _rxEventQueue: receives RX events from HAL (only the handle, belongs to HAL layer)
+    QueueHandle_t _rxEventQueue = nullptr;
     // _txRequestQueue: just a dummy signaling queue so that we can use xQueueSet 
     // to wait for both RX and TX without wasting CPU
-    QueueHandle_t _rxEventQueue = nullptr;
+    StaticQueue_t _txRequestQueueBuffer;
+    alignas(4) uint8_t _txRequestQueueStorage[1 * sizeof(void*)];
     QueueHandle_t _txRequestQueue = nullptr; 
-    QueueSetHandle_t _eventQueueSet = nullptr; // Combines RX event queue + UART event queue
+    // _eventQueueSet: Combines RX event queue + UART event queue
+    QueueSetHandle_t _eventQueueSet = nullptr;
 
     // Miscellaneous
     RoundTripTimer _rtt;
@@ -133,6 +136,8 @@ private:
     // ===================================================================================
 
     static void rxTxTask(void* rtu);
+    StaticTask_t _rxTxTaskBuffer;
+    StackType_t _rxTxTaskStack[RXTX_TASK_STACK_SIZE];
     TaskHandle_t _rxTxTaskHandle = nullptr;
 
     // ===================================================================================

@@ -76,8 +76,9 @@ TCP::Result TCP::begin() {
     }
 
     // Create TX request queue (size 1)
-    _txRequestQueue = xQueueCreate(1, sizeof(void*));
+    _txRequestQueue = xQueueCreateStatic(1, sizeof(void*), _txRequestQueueStorage, &_txRequestQueueBuffer);
     if (!_txRequestQueue) {
+        _rxEventQueue = nullptr;
         return Error(ERR_INIT_FAILED, "failed to create TX queue");
     }
 
@@ -106,20 +107,19 @@ TCP::Result TCP::begin() {
     _isInitialized = true; // Needed for the task not to terminate prematurely
 
     // Create the RX/TX task
-    BaseType_t rxTxTaskRes = xTaskCreatePinnedToCore(
+    _rxTxTaskHandle = xTaskCreateStatic(
         /*pxTaskCode*/      rxTxTask,
-        /*pcName*/          _role == Modbus::CLIENT ? "ModbusTCP_CliPoll" : "ModbusTCP_SrvPoll",
-        /*usStackDepth*/    TCP::RXTX_TASK_STACK_SIZE,
+        /*pcName*/          "ModbusTCP_RxTxTask",
+        /*usStackDepth*/    RXTX_TASK_STACK_SIZE,
         /*pvParameters*/    this,
         /*uxPriority*/      tskIDLE_PRIORITY + 1,
-        /*pvCreatedTask*/   &_rxTxTaskHandle,
-        /*xCoreID*/         tskNO_AFFINITY
+        /*puxStackBuffer*/  _rxTxTaskStack,
+        /*xTaskBuffer*/     &_rxTxTaskBuffer
     );
 
     // Cleanup resources if task creation failed
-    if (rxTxTaskRes != pdPASS) {
+    if (!_rxTxTaskHandle) {
         _isInitialized = false;
-        _rxTxTaskHandle = nullptr;
         beginCleanup();
         return Error(ERR_INIT_FAILED, "failed to create poll task");
     }

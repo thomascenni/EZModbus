@@ -50,12 +50,13 @@ bool Client::PendingRequest::set(const Modbus::Frame& request, Modbus::Frame* re
     
     // Create and start timeout timer
     if (!_timeoutTimer) {
-        _timeoutTimer = xTimerCreate(
+        _timeoutTimer = xTimerCreateStatic(
             "ModbusTimeout",
             pdMS_TO_TICKS(timeoutMs),
             pdFALSE,  // one-shot
             this,     // timer ID = this PendingRequest
-            timeoutCallback
+            timeoutCallback,
+            &_timeoutTimerBuf
         );
     } else {
         // Update timer period and restart
@@ -93,12 +94,13 @@ bool Client::PendingRequest::set(const Modbus::Frame& request, Client::ResponseC
 
     // Create / restart timeout timer
     if (!_timeoutTimer) {
-        _timeoutTimer = xTimerCreate(
+        _timeoutTimer = xTimerCreateStatic(
             "ModbusTimeout",
             pdMS_TO_TICKS(timeoutMs),
             pdFALSE,
             this,
-            timeoutCallback);
+            timeoutCallback,
+            &_timeoutTimerBuf);
     } else {
         xTimerChangePeriod(_timeoutTimer, pdMS_TO_TICKS(timeoutMs), 0);
     }
@@ -328,7 +330,7 @@ Client::Result Client::sendRequest(const Modbus::Frame& request,
     // ---------- Synchronous mode (userTracker == nullptr) ----------
     if (!userTracker) {
         // Create an event group for this synchronous transaction
-        EventGroupHandle_t syncEvtGrp = xEventGroupCreate();
+        EventGroupHandle_t syncEvtGrp = xEventGroupCreateStatic(&_syncEventGroupBuf);
         if (!syncEvtGrp) {
             _pendingRequest.setResult(ERR_TIMEOUT);
             _pendingRequest.clear();

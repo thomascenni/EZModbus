@@ -243,7 +243,7 @@ bool TCP::beginServer(uint16_t port, uint32_t ip) {
         return false; // Error logged in setupServerSocket
     }
 
-    _rxQueue = xQueueCreate(RX_QUEUE_SIZE, sizeof(int));
+    _rxQueue = xQueueCreateStatic(RX_QUEUE_SIZE, sizeof(int), _rxQueueStorage, &_rxQueueBuf);
     if (!_rxQueue) {
         Modbus::Debug::LOG_MSG("Failed to create RX queue.");
         stop(); // Cleanup listen socket
@@ -252,19 +252,18 @@ bool TCP::beginServer(uint16_t port, uint32_t ip) {
     Modbus::Debug::LOG_MSG("RX queue created.");
 
     _isRunning = true;
-    BaseType_t taskCreated = xTaskCreatePinnedToCore(
+    _tcpTaskHandle = xTaskCreateStatic(
         tcpTask,
         "ModbusHALtcpSrv",
-        4096, // Stack size
+        TCP_TASK_STACK_SIZE, // Stack size
         this, // Task parameter
         tskIDLE_PRIORITY + 1,    // Priority
-        &_tcpTaskHandle,
-        tskNO_AFFINITY // Run on any core
+        _tcpTaskStack,
+        &_tcpTaskBuf
     );
 
-    if (taskCreated != pdPASS) {
+    if (_tcpTaskHandle == nullptr) {
         Modbus::Debug::LOG_MSG("Failed to create server TCP task.");
-        _tcpTaskHandle = nullptr; // Ensure it's null
         stop(); // Cleanup queue and socket
         return false;
     }
@@ -284,7 +283,7 @@ bool TCP::beginClient(const char* serverIP, uint16_t port) {
         return false; // Error logged in setupClientSocket
     }
 
-    _rxQueue = xQueueCreate(RX_QUEUE_SIZE, sizeof(int));
+    _rxQueue = xQueueCreateStatic(RX_QUEUE_SIZE, sizeof(int), _rxQueueStorage, &_rxQueueBuf);
     if (!_rxQueue) {
         Modbus::Debug::LOG_MSG("Failed to create RX queue for client.");
         stop(); // Cleanup client socket
@@ -293,17 +292,17 @@ bool TCP::beginClient(const char* serverIP, uint16_t port) {
     Modbus::Debug::LOG_MSG("RX queue created for client.");
     
     _isRunning = true;
-    BaseType_t taskCreated = xTaskCreatePinnedToCore(
+    TaskHandle_t taskCreated = xTaskCreateStatic(
         tcpTask,
         "ModbusHALtcpCli",
-        4096, // Stack size
+        TCP_TASK_STACK_SIZE, // Stack size
         this, // Task parameter
-        5,    // Priority
-        &_tcpTaskHandle,
-        tskNO_AFFINITY // Run on any core
+        tskIDLE_PRIORITY + 1,    // Priority
+        _tcpTaskStack,
+        &_tcpTaskBuf
     );
 
-    if (taskCreated != pdPASS) {
+    if (taskCreated == nullptr) {
         Modbus::Debug::LOG_MSG("Failed to create client TCP task.");
         _tcpTaskHandle = nullptr; // Ensure it's null
         stop(); // Cleanup queue and socket

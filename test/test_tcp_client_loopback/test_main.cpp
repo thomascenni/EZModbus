@@ -1491,11 +1491,11 @@ void test_server_busy_exception() {
     vTaskDelay(pdMS_TO_TICKS(1));
 
     // 2) Créer à la volée un second client pour frapper le serveur pendant qu'il est occupé
-    ModbusHAL::TCP tempHal(LOOPBACK_IP_STR, MODBUS_PORT);
+    static ModbusHAL::TCP tempHal(LOOPBACK_IP_STR, MODBUS_PORT);
     tempHal.begin();
-    ModbusInterface::TCP tempIfc(tempHal, Modbus::CLIENT);
+    static ModbusInterface::TCP tempIfc(tempHal, Modbus::CLIENT);
     tempIfc.begin();
-    Modbus::Client tempClient(tempIfc);
+    static Modbus::Client tempClient(tempIfc);
     tempClient.begin();
 
     Modbus::Frame busyResp;

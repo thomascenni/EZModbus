@@ -789,7 +789,7 @@ void test_multiple_write_request_overlapping_registers() {
 void test_second_server_on_same_interface() {
     Modbus::Logger::logln("\nTEST_SECOND_SERVER_ON_SAME_INTERFACE");
 
-    Modbus::Server server2(rtu, 2, 2);
+    static Modbus::Server server2(rtu, 2, 2);
     TaskHandle_t ezmTaskHandle2 = NULL;
     xTaskCreatePinnedToCore(EZModbusServerTask, "EZModbusServerTask2", 16384, &server2, 5, &ezmTaskHandle2, 0);
 

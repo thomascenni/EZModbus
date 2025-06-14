@@ -43,11 +43,11 @@ inline void WAIT_US(uint32_t us)    { esp_rom_delay_us(us); }
 class Mutex {
 public:
     Mutex() {
-        _h = xSemaphoreCreateMutex();
-        configASSERT(_h);
+        _sem = xSemaphoreCreateMutexStatic(&_semBuf);
+        configASSERT(_sem);
     }
     ~Mutex() {
-        vSemaphoreDelete(_h);
+        vSemaphoreDelete(_sem);
     }
     // Non-copiable
     Mutex(const Mutex&) = delete;
@@ -57,7 +57,7 @@ public:
     * @return True if the mutex was locked, false otherwise
     */
     bool tryLock() {
-        return xSemaphoreTake(_h, 0) == pdTRUE;
+        return xSemaphoreTake(_sem, 0) == pdTRUE;
     }
 
     /* @brief Lock the mutex
@@ -65,18 +65,19 @@ public:
     * @return True if the mutex was locked, false otherwise
     */
     bool lock(TickType_t wait = portMAX_DELAY) {
-        return xSemaphoreTake(_h, wait) == pdTRUE;
+        return xSemaphoreTake(_sem, wait) == pdTRUE;
     }
 
     /* @brief Unlock the mutex
     */
     void unlock() {
-        BaseType_t ok = xSemaphoreGive(_h);
+        BaseType_t ok = xSemaphoreGive(_sem);
         configASSERT(ok == pdTRUE);
     }
 
 private:
-    SemaphoreHandle_t _h; // Handle to the mutex
+    StaticSemaphore_t _semBuf;
+    SemaphoreHandle_t _sem; // Handle to the mutex
 };
 
 

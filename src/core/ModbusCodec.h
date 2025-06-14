@@ -616,8 +616,11 @@ class PDU {
 
     // Template function to clear an object + cast an error (for appendToBytes & setFromBytes)
     template<typename T>
-    static Result HandleError(T& objectToClear, Result errorCode, const char* desc = nullptr,
-                    Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()) {
+    static Result HandleError(T& objectToClear, Result errorCode, const char* desc = nullptr
+                    #ifdef EZMODBUS_DEBUG
+                    , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
+                    #endif
+                    ) {
         objectToClear.clear();
         #ifdef EZMODBUS_DEBUG
             return Error(errorCode, desc, ctx);

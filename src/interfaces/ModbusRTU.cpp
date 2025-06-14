@@ -49,7 +49,7 @@ RTU::Result RTU::begin() {
     }
 
     // Create TX request queue
-    _txRequestQueue = xQueueCreate(1, sizeof(void*));
+    _txRequestQueue = xQueueCreateStatic(1, sizeof(void*), _txRequestQueueStorage, &_txRequestQueueBuffer);
     if (!_txRequestQueue) {
         _rxEventQueue = nullptr;
         return Error(ERR_INIT_FAILED, "failed to create TX request queue");
@@ -84,18 +84,18 @@ RTU::Result RTU::begin() {
     _isInitialized = true; // Needed for the task not to terminate prematurely
 
     // Create the RX/TX task
-    BaseType_t taskCreated = xTaskCreatePinnedToCore(
+    _rxTxTaskHandle = xTaskCreateStatic(
         /*pxTaskCode*/      rxTxTask,
         /*pcName*/          "ModbusRTU_RxTxTask", 
         /*usStackDepth*/    RXTX_TASK_STACK_SIZE,
         /*pvParameters*/    this,
         /*uxPriority*/      tskIDLE_PRIORITY + 1,
-        /*pvCreatedTask*/   &_rxTxTaskHandle,
-        /*xCoreID*/         tskNO_AFFINITY
+        /*puxStackBuffer*/  _rxTxTaskStack,
+        /*xTaskBuffer*/     &_rxTxTaskBuffer
     );
 
     // Cleanup resources if task creation failed
-    if (taskCreated != pdPASS) {
+    if (!_rxTxTaskHandle) {
         _isInitialized = false;
         beginCleanup();
         return Error(ERR_INIT_FAILED, "failed to create rxTxTask");

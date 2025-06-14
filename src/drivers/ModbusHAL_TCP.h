@@ -26,7 +26,7 @@ public:
     static constexpr size_t MAX_ACTIVE_SOCKETS = 4;
     static constexpr size_t MAX_MODBUS_FRAME_SIZE = 260;  // Modbus TCP max frame size (MBAP + PDU)
     static constexpr size_t RX_QUEUE_SIZE = 16; // Number of Modbus frames the RX queue can hold
-
+    static constexpr size_t TCP_TASK_STACK_SIZE = 4096;
     // Structure for messages exchanged between HAL and Modbus layer
     struct TCPMsg {
         uint8_t payload[MAX_MODBUS_FRAME_SIZE];
@@ -39,6 +39,11 @@ public:
     TCP(const char* serverIP, uint16_t port);                // Client
     ~TCP();
 
+    // // Storage for FreeRTOS objects
+    // StaticTask_t _tcpTaskBuf;
+    // StackType_t _tcpTaskStack[TCP_TASK_STACK_SIZE];
+    StaticQueue_t _rxQueueBuf;
+    uint8_t _rxQueueStorage[RX_QUEUE_SIZE * sizeof(int)];
     // Disable copy and assign
     TCP(const TCP&) = delete;
     TCP& operator=(const TCP&) = delete;
@@ -67,6 +72,9 @@ public:
 private:
     // Task for handling socket events and data
     static void tcpTask(void* param);
+    // TaskHandle_t _tcpTaskHandle; -> defined in public to allow access from tests code
+    StaticTask_t _tcpTaskBuf;
+    StackType_t _tcpTaskStack[TCP_TASK_STACK_SIZE];
     void runTcpTask(); // Internal method called by the FreeRTOS task
 
     // Socket management
