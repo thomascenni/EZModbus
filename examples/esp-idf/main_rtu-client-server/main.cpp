@@ -8,51 +8,58 @@
 #include "EZModbus.h"
 
 static const char *TAG_APP = "MODBUS_LOOPBACK_APP";
-static const char *TAG_SERVER_TASK = "SERVER_TASK";
 static const char *TAG_CLIENT_TASK = "CLIENT_TASK";
-
-// UART1 configuration (server)
-#define UART_SERVER_PORT    UART_NUM_1
-#define UART_SERVER_TX_PIN  GPIO_NUM_7
-#define UART_SERVER_RX_PIN  GPIO_NUM_44
-#define UART_SERVER_DE_PIN  GPIO_NUM_NC
-
-// UART2 configuration (client)
-#define UART_CLIENT_PORT    UART_NUM_2
-#define UART_CLIENT_TX_PIN  GPIO_NUM_43
-#define UART_CLIENT_RX_PIN  GPIO_NUM_6
-#define UART_CLIENT_DE_PIN  GPIO_NUM_NC
-
-// Common Modbus RTU cfg
-#define MODBUS_BAUD_RATE    115200
-#define MODBUS_CONFIG       ModbusHAL::UART::CONFIG_8N1
-#define SERVER_SLAVE_ID     1
-#define TARGET_REGISTER     100
-#define CLIENT_POLL_INTERVAL_MS 2000
 
 // Aliases for convenience
 using UART = ModbusHAL::UART;
+using UARTConfig = ModbusHAL::UART::Config;
 using ModbusRTU = ModbusInterface::RTU;
 using ModbusClient = Modbus::Client;
 using ModbusServer = Modbus::Server;
-using ModbusRegister = Modbus::Server::Register;
+using ModbusWord = Modbus::Word;
+
+// UART Server configuration
+UARTConfig uartServerConfig = {
+    .uartNum = UART_NUM_1,
+    .baud = 115200,
+    .config = UART::CONFIG_8N1,
+    .rxPin = GPIO_NUM_44,
+    .txPin = GPIO_NUM_7,
+    .dePin = GPIO_NUM_NC
+};
+
+// UART Client configuration
+UARTConfig uartClientConfig = {
+    .uartNum = UART_NUM_2,
+    .baud = 115200,
+    .config = UART::CONFIG_8N1,
+    .rxPin = GPIO_NUM_6,
+    .txPin = GPIO_NUM_43,
+    .dePin = GPIO_NUM_NC
+};
+
+// Common Modbus RTU cfg
+#define SERVER_SLAVE_ID         1
+#define TARGET_REGISTER         100
+#define NUM_WORDS               1 // Number of registers to read/write
+#define CLIENT_POLL_INTERVAL_MS 2000
+
 
 // MODBUS INSTANCES
 
 // Server
-UART uartServer(UART_SERVER_PORT, MODBUS_BAUD_RATE, MODBUS_CONFIG,
-                     UART_SERVER_RX_PIN, UART_SERVER_TX_PIN, UART_SERVER_DE_PIN);
+UART uartServer(uartServerConfig);
 ModbusRTU rtuServer(uartServer, Modbus::SERVER);
-ModbusServer modbusServer(rtuServer, SERVER_SLAVE_ID);
+Modbus::StaticWordStore<NUM_WORDS> store;
+ModbusServer modbusServer(rtuServer, store, SERVER_SLAVE_ID);
 
 // Client
-UART uartClient(UART_CLIENT_PORT, MODBUS_BAUD_RATE, MODBUS_CONFIG,
-                     UART_CLIENT_RX_PIN, UART_CLIENT_TX_PIN, UART_CLIENT_DE_PIN);
+UART uartClient(uartClientConfig);
 ModbusRTU rtuClient(uartClient, Modbus::CLIENT);
 ModbusClient modbusClient(rtuClient);
 
 // Server variable
-volatile uint32_t counter = 1000;
+volatile uint16_t counter = 1000;
 
 void clientTask(void *pvParameters) {
     ESP_LOGI(TAG_CLIENT_TASK, "Client Modbus task started.");
@@ -129,24 +136,24 @@ extern "C" void app_main(void)
         ESP_LOGE(TAG_APP, "Error initializing Server UART HAL: %s", esp_err_to_name(uartServerInitResult));
         return;
     }
-    ESP_LOGI(TAG_APP, "Server UART HAL (UART%d) initialized.", UART_SERVER_PORT);
+    ESP_LOGI(TAG_APP, "Server UART HAL (UART) initialized.");
 
     esp_err_t uartClientInitResult = uartClient.begin();
     if (uartClientInitResult != ESP_OK) {
         ESP_LOGE(TAG_APP, "Error initializing Client UART HAL: %s", esp_err_to_name(uartClientInitResult));
         return;
     }
-    ESP_LOGI(TAG_APP, "Client UART HAL (UART%d) initialized.", UART_CLIENT_PORT);
+    ESP_LOGI(TAG_APP, "Client UART HAL (UART) initialized.");
 
-    ModbusRegister regDesc = {
+    ModbusWord regDesc = {
         .type = Modbus::HOLDING_REGISTER,
-        .address = TARGET_REGISTER,
-        .name = "LoopbackTestRegister",
+        .startAddr = TARGET_REGISTER,
+        .nbRegs = 1,
         .value = &counter
     };
-    ModbusServer::Result addRegResult = modbusServer.addRegister(regDesc);
-    if (addRegResult != ModbusServer::SUCCESS) {
-        ESP_LOGE(TAG_APP, "Error adding register to server: %s", ModbusServer::toString(addRegResult));
+    ModbusServer::Result addWordResult = modbusServer.addWord(regDesc);
+    if (addWordResult != ModbusServer::SUCCESS) {
+        ESP_LOGE(TAG_APP, "Error adding word to server: %s", ModbusServer::toString(addWordResult));
         return;
     }
     ESP_LOGI(TAG_APP, "Register %u added to server with initial value %lu.", TARGET_REGISTER, (unsigned long)counter);

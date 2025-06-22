@@ -1,11 +1,12 @@
 /**
- * @file ModbusDebug.h
+ * @file ModbusDebug.hpp
  * @brief Modbus debug utilities
  */
 
 #pragma once
 
 #include "core/ModbusCore.h"
+#include "core/ModbusFrame.hpp"
 
 namespace Modbus {
 namespace Debug {
@@ -24,14 +25,14 @@ struct CallCtx {
 };
 
 /* @brief Maximum size for a formatted debug message (including null terminator) */
-constexpr std::size_t MAX_DEBUG_MSG_SIZE = 512;
+constexpr std::size_t MAX_DEBUG_MSG_SIZE = 256;
 
 } // namespace Debug
 } // namespace Modbus
 
 #ifdef EZMODBUS_DEBUG
 
-#include "utils/ModbusLogger.h"
+#include "utils/ModbusLogger.hpp"
 
 namespace Modbus {
 namespace Debug {
@@ -54,13 +55,21 @@ static const char* getBasename(const char* path) {
     return basename;
 }
 
+/* @brief Log a simple debug message with context information
+ * @param message Message to log
+ * @param ctx Call context (file, function, line)
+ */
+inline void LOG_MSG(const char* message = "", CallCtx ctx = CallCtx()) {
+    Modbus::Logger::logf("[%s::%s:%d] %s\n", getBasename(ctx.file), ctx.function, ctx.line, message);
+}
+
 /* @brief Format and log a debug message with printf-style formatting
  * @param ctx Call context (file, function, line)
  * @param format Printf-style format string
  * @param args Arguments for the format string
  */
 template<typename... Args>
-inline void LOG_MSGF_impl(CallCtx ctx, const char* format, Args&&... args) {
+inline void LOG_MSGF_CTX(CallCtx ctx, const char* format, Args&&... args) {
     // Format directly into a fixed-size stack buffer and truncate if necessary
     char buffer[MAX_DEBUG_MSG_SIZE];
 
@@ -77,71 +86,85 @@ inline void LOG_MSGF_impl(CallCtx ctx, const char* format, Args&&... args) {
                          buffer, suffix);
 }
 
-// Macro to automatically capture call context
-#define LOG_MSGF(format, ...) LOG_MSGF_impl(Modbus::Debug::CallCtx(), format, ##__VA_ARGS__)
+/* @brief Macro to automatically capture call context
+ * @param format Printf-style format string
+ * @param args Arguments for the format string
+ */
+#define LOG_MSGF(format, ...) LOG_MSGF_CTX(Modbus::Debug::CallCtx(), format, ##__VA_ARGS__)
 
-inline void LOG_MSG(const std::string& message = "", CallCtx ctx = CallCtx()) {
-    Modbus::Logger::logf("[%s::%s:%d] %s\n", getBasename(ctx.file), ctx.function, ctx.line, message.c_str());
-}
-
-inline void LOG_HEXDUMP(const ByteBuffer& bytes, const char* desc, CallCtx ctx = CallCtx()) {
+inline void LOG_HEXDUMP(const ByteBuffer& bytes, CallCtx ctx = CallCtx()) {
     if (bytes.empty()) {
-        Modbus::Logger::logf("[%s::%s:%d] %s<empty>\n", getBasename(ctx.file), ctx.function, ctx.line, desc);
+        Modbus::Logger::logf("[%s::%s:%d] Hexdump:<empty>\n", getBasename(ctx.file), ctx.function, ctx.line);
         return;
     }
 
-    // 1) Compute the needed size : 
-    //    - for each byte : 2 chars hex + 1 space
-    //    - for the prefix and a final \n
-    size_t needed = strlen(desc) + (bytes.size() * 3) + 2;
-    std::vector<char> buffer(needed);
-    char* ptr = buffer.data();
-    size_t remaining = needed;
+    char buffer[MAX_DEBUG_MSG_SIZE];
+    size_t idx = 0;
 
-    // 2) Copy the prefix
-    int n = snprintf(ptr, remaining, "%s", desc);
-    ptr += n;
-    remaining -= n;
+    // Prefix
+    idx += snprintf(buffer + idx, sizeof(buffer) - idx, "Hexdump: ");
 
-    // 3) Format each byte
+    // Hex bytes
     for (uint8_t b : bytes) {
-        n = snprintf(ptr, remaining, "%02X ", b);
-        ptr += n;
-        remaining -= n;
+        if (idx + 4 >= sizeof(buffer)) { // 3 chars for "..." + null terminator reserve
+            idx += snprintf(buffer + idx, sizeof(buffer) - idx, "...");
+            break;
+        }
+        idx += snprintf(buffer + idx, sizeof(buffer) - idx, "%02X ", b);
     }
 
-    // 4) Terminate with a newline
-    if (remaining > 0) {
-        *ptr++ = '\n';
-        *ptr = '\0';
+    // Newline termination (ensure room for 1 char + null)
+    if (idx + 2 < sizeof(buffer)) {
+        buffer[idx++] = '\n';
+        buffer[idx] = '\0';
     } else {
-        buffer.back() = '\0';
+        buffer[sizeof(buffer) - 2] = '\n';
+        buffer[sizeof(buffer) - 1] = '\0';
     }
 
-    // 5) Only one logf call for everything
-    Modbus::Logger::logf("[%s::%s:%d] %s", getBasename(ctx.file), ctx.function, ctx.line, buffer.data());
+    // Single logf call for everything
+    Modbus::Logger::logf("[%s::%s:%d] %s", getBasename(ctx.file), ctx.function, ctx.line, buffer);
 }
 
+/* @brief Log a Modbus frame with context information
+ * @param frame Modbus frame to log
+ * @param desc Description of the frame (optional)
+ * @param ctx Call context (file, function, line)
+ */
 inline void LOG_FRAME(const Modbus::Frame& frame, const char* desc = nullptr, CallCtx ctx = CallCtx()) {
     // Log header with file/function/line information
     Modbus::Logger::logf("[%s::%s:%d] %s:\n", getBasename(ctx.file), ctx.function, ctx.line, desc);
     
     // Body
     Modbus::Logger::logf("> Type           : %s\n", frame.type == Modbus::REQUEST ? "REQUEST" : "RESPONSE");
-    Modbus::Logger::logf("> Function code  : 0x%02X\n", frame.fc);
+    Modbus::Logger::logf("> Function code  : 0x%02X (%s)\n", frame.fc, Modbus::toString(frame.fc));
     Modbus::Logger::logf("> Slave ID       : %d\n", frame.slaveId);
     Modbus::Logger::logf("> Register Addr  : %d\n", frame.regAddress);
     Modbus::Logger::logf("> Register Count : %d\n", frame.regCount);
     
     // Frame data (only if not empty)
     if (frame.regCount > 0) {
-        std::string dataStr = "> Data           : ";
-        for (int i=0; i<frame.regCount; i++) {
+        constexpr size_t bufSize = MAX_DEBUG_MSG_SIZE;
+        char dataStr[bufSize];
+        strcpy(dataStr, "> Data           : ");
+        
+        for (int i = 0; i < frame.regCount; i++) {
             char buffer[10];
-            snprintf(buffer, sizeof(buffer), "0x%04X ", frame.data[i]);
-            dataStr += buffer;
+            int written = snprintf(buffer, sizeof(buffer), "0x%04X ", frame.data[i]);
+
+            // Bytes still available in dataStr (leave 4 chars: "..." + null)
+            size_t remaining = bufSize - strlen(dataStr) - 1;
+
+            if (written >= 0 && static_cast<size_t>(written) < remaining) {
+                // Enough room → append normally
+                strncat(dataStr, buffer, remaining);
+            } else {
+                // Not enough room → append truncation suffix and stop
+                strncat(dataStr, "...", remaining);
+                break;
+            }
         }
-        Modbus::Logger::logf("%s\n", dataStr.c_str());
+        Modbus::Logger::logf("%s\n", dataStr);
     }
     
     // Exception code (if present)

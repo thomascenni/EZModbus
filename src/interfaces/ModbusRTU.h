@@ -5,9 +5,9 @@
 #pragma once
 
 #include "core/ModbusCore.h"
-#include "core/ModbusCodec.h"
-#include "interfaces/ModbusInterface.h"
-#include "utils/ModbusDebug.h"
+#include "core/ModbusCodec.hpp"
+#include "interfaces/ModbusInterface.hpp"
+#include "utils/ModbusDebug.hpp"
 #include "drivers/ModbusHAL_UART.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -60,7 +60,7 @@ public:
                 endUs = TIME_US();
             }
             uint64_t deltaUs = (endUs - startUs);
-            Modbus::Debug::LOG_MSGF("RTT: %d us", deltaUs);
+            Modbus::Debug::LOG_MSGF("RTT: %d us", (uint32_t)deltaUs);
         }
     #else // Do not use the RTT if debug is disabled
         void start(uint64_t* storeUs = nullptr) {}

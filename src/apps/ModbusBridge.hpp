@@ -1,13 +1,13 @@
 /**
- * @file ModbusBridge.h
+ * @file ModbusBridge.hpp
  * @brief Modbus bridge implementation
  */
 
 #pragma once
 
 #include "core/ModbusCore.h"
-#include "interfaces/ModbusInterface.h"
-#include "utils/ModbusDebug.h"
+#include "interfaces/ModbusInterface.hpp"
+#include "utils/ModbusDebug.hpp"
 
 namespace Modbus {
 
@@ -29,33 +29,31 @@ public:
         }
     }
 
-    /* @brief Helper to cast an error
-     * @return The error result
-     * @note Captures point of call context & prints a log message when debug 
-     * is enabled. No overhead when debug is disabled (except for
-     * the desc string, if any)
-     */
+    // Helper to cast an error
+    // - Returns a Result
+    // - Captures point of call context & prints a log message when debug 
+    // is enabled. No overhead when debug is disabled (except for
+    // the desc string, if any)
     static inline Result Error(Result res, const char* desc = nullptr
                         #ifdef EZMODBUS_DEBUG
                         , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                         #endif
                         ) {
         #ifdef EZMODBUS_DEBUG
-            std::string logMessage = std::string("Error: ") + toString(res);
             if (desc && *desc != '\0') {
-                logMessage += std::string(" (") + desc + ")";
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Error: %s (%s)", toString(res), desc);
+            } else {
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Error: %s", toString(res));
             }
-            Modbus::Debug::LOG_MSG(logMessage, ctx);
         #endif
         return res;
     }
 
-    /* @brief Helper to cast a success
-     * @return Result::SUCCESS
-     * @note Captures point of call context & prints a log message when debug 
-     * is enabled. No overhead when debug is disabled (except for
-     * the desc string, if any)
-     */
+    // Helper to cast a success
+    // - Returns Result::SUCCESS
+    // - Captures point of call context & prints a log message when debug 
+    // is enabled. No overhead when debug is disabled (except for
+    // the desc string, if any)
     static inline Result Success(const char* desc = nullptr
                           #ifdef EZMODBUS_DEBUG
                           , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
@@ -63,8 +61,7 @@ public:
                           ) {
         #ifdef EZMODBUS_DEBUG
             if (desc && *desc != '\0') {
-                std::string logMessage = std::string("Success: ") + desc;
-                Modbus::Debug::LOG_MSG(logMessage, ctx);
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Success: %s", desc);
             }
         #endif
         return SUCCESS;
@@ -114,21 +111,23 @@ public:
         }
         
         // Configure the master interface callback to redirect to the slave
-        auto resSetCbMaster = masterInterface->setRcvCallback([this](const Modbus::Frame& frame) {
+        auto resSetCbMaster = masterInterface->setRcvCallback([](const Modbus::Frame& frame, void* ctx) {
+            auto* self = static_cast<Bridge*>(ctx);
             if (frame.type == Modbus::RESPONSE) { // The master interface only sends responses back to the slave
-                slaveInterface->sendFrame(frame, nullptr, nullptr);
+                self->slaveInterface->sendFrame(frame, nullptr, nullptr);
             }
-        });
+        }, this);
         if (resSetCbMaster != ModbusInterface::IInterface::SUCCESS) {
             return Error(ERR_INIT_FAILED, "failed to set master interface callback");
         }
 
         // Configure the slave interface callback to redirect to the master
-        auto resSetCbSlave = slaveInterface->setRcvCallback([this](const Modbus::Frame& frame) {
+        auto resSetCbSlave = slaveInterface->setRcvCallback([](const Modbus::Frame& frame, void* ctx) {
+            auto* self = static_cast<Bridge*>(ctx);
             if (frame.type == Modbus::REQUEST) { // The slave interface only forwards requests to the master
-                masterInterface->sendFrame(frame, nullptr, nullptr);
+                self->masterInterface->sendFrame(frame, nullptr, nullptr);
             }
-        });
+        }, this);
         if (resSetCbSlave != ModbusInterface::IInterface::SUCCESS) {
             return Error(ERR_INIT_FAILED, "failed to set slave interface callback");
         }

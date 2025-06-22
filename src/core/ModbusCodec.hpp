@@ -1,14 +1,15 @@
 /**
- * @file ModbusCodec.h
- * @brief Modbus codec implementation
+ * @file ModbusCodec.hpp
+ * @brief Modbus codecs
  */
 
 #pragma once
 
 #include "core/ModbusCore.h"
+#include "core/ModbusFrame.hpp"
 
 #ifndef NATIVE_TEST // Do NOT include additional headers for native tests (standalone compilation)
-    #include "utils/ModbusDebug.h"
+    #include "utils/ModbusDebug.hpp"
 #endif
 
 namespace ModbusCodec {
@@ -53,33 +54,31 @@ namespace ModbusCodec {
         }
     }
     
-    /* @brief Helper to cast an error
-     * @return The error result
-     * @note Captures point of call context & prints a log message when debug 
-     * is enabled. No overhead when debug is disabled (except for
-     * the desc string, if any)
-     */
+    // Helper to cast an error
+    // - Returns a Result
+    // - Captures point of call context & prints a log message when debug 
+    // is enabled. No overhead when debug is disabled (except for
+    // the desc string, if any)
     static inline Result Error(Result res, const char* desc = nullptr
                         #ifdef EZMODBUS_DEBUG
                         , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                         #endif
                         ) {
         #ifdef EZMODBUS_DEBUG
-            std::string logMessage = std::string("Error: ") + toString(res);
             if (desc && *desc != '\0') {
-                logMessage += std::string(" (") + desc + ")";
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Error: %s (%s)", toString(res), desc);
+            } else {
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Error: %s", toString(res));
             }
-            Modbus::Debug::LOG_MSG(logMessage, ctx);
         #endif
         return res;
     }
 
-    /* @brief Helper to cast a success
-     * @return Result::SUCCESS
-     * @note Captures point of call context & prints a log message when debug 
-     * is enabled. No overhead when debug is disabled (except for
-     * the desc string, if any)
-     */
+    // Helper to cast a success
+    // - Returns Result::SUCCESS
+    // - Captures point of call context & prints a log message when debug 
+    // is enabled. No overhead when debug is disabled (except for
+    // the desc string, if any)
     static inline Result Success(const char* desc = nullptr
                           #ifdef EZMODBUS_DEBUG
                           , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
@@ -87,8 +86,7 @@ namespace ModbusCodec {
                           ) {
         #ifdef EZMODBUS_DEBUG
             if (desc && *desc != '\0') {
-                std::string logMessage = std::string("Success: ") + desc;
-                Modbus::Debug::LOG_MSG(logMessage, ctx);
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Success: %s", desc);
             }
         #endif
         return SUCCESS;
@@ -1027,5 +1025,33 @@ public:
     static constexpr size_t EXCEPTION_FRAME_SIZE = 9;
 
 }; // class TCP
+
+// ===================================================================================
+// DATA TYPE CONVERSION UTILITIES
+// ===================================================================================
+
+/* @brief Convert a float to two 16-bit registers (IEEE 754 format)
+ * @param value The float value to convert
+ * @param registers Output array of 2 registers (must be pre-allocated)
+ * @note Stores the float as: registers[0] = upper 16 bits, registers[1] = lower 16 bits
+ */
+inline void floatToRegisters(float value, uint16_t* registers) {
+    uint32_t float_bits;
+    memcpy(&float_bits, &value, sizeof(float));
+    registers[0] = static_cast<uint16_t>(float_bits >> 16);    // Upper 16 bits
+    registers[1] = static_cast<uint16_t>(float_bits & 0xFFFF); // Lower 16 bits
+}
+
+/* @brief Convert two 16-bit registers to a float (IEEE 754 format)
+ * @param registers Input array of 2 registers
+ * @return The reconstructed float value
+ * @note Expects: registers[0] = upper 16 bits, registers[1] = lower 16 bits
+ */
+inline float registersToFloat(const uint16_t* registers) {
+    uint32_t float_bits = (static_cast<uint32_t>(registers[0]) << 16) | registers[1];
+    float value;
+    memcpy(&value, &float_bits, sizeof(float));
+    return value;
+}
 
 } // namespace ModbusCodec

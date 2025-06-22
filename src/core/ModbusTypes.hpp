@@ -1,6 +1,6 @@
 /**
- * @file ModbusTypes.h
- * @brief Types used across EZModbus library
+ * @file ModbusTypes.hpp
+ * @brief Header includes & general-purpose types used across EZModbus library
  */
 
 #pragma once

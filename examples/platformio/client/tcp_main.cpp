@@ -20,20 +20,21 @@
 #define THERMOSTAT_SLAVE_ID 1
 
 // Register map for our example thermostat
-// Coils (read/write)
-#define REG_TEMP_REGULATION_ENABLE 100      // Temperature regulation enable
-#define REG_HUMIDITY_REGULATION_ENABLE 101  // Humidity regulation enable
+namespace RegAddr {
+    // Coils (read/write)
+    constexpr uint16_t REG_TEMP_REGULATION_ENABLE = 100;      // Temperature regulation enable
     
-// Discrete Inputs (read only)
-#define REG_ALARM_START 200                 // 10 discrete inputs for alarms (200-209)
+    // Discrete Inputs (read only)
+    constexpr uint16_t REG_ALARM_START = 200;                 // 10 discrete inputs for alarms (200-209)
     
-// Input Registers (read only)
-#define REG_CURRENT_TEMPERATURE 300         // Current temperature (°C × 10)
-#define REG_CURRENT_HUMIDITY 301            // Current humidity (% × 10)
+    // Input Registers (read only)
+    constexpr uint16_t REG_CURRENT_TEMPERATURE = 300;         // Current temperature (°C × 10)
+    constexpr uint16_t REG_CURRENT_HUMIDITY = 301;            // Current humidity (% × 10)
     
-// Holding Registers (read/write)
-#define REG_TEMPERATURE_SETPOINT 400        // Temperature setpoint (°C × 10)
-#define REG_HUMIDITY_SETPOINT 401           // Humidity setpoint (% × 10)
+    // Holding Registers (read/write)
+    constexpr uint16_t REG_TEMPERATURE_SETPOINT = 400;        // Temperature setpoint (°C × 10)
+    constexpr uint16_t REG_HUMIDITY_SETPOINT = 401;           // Humidity setpoint (% × 10)
+}
 
 // Aliases for convenience
 using TCP = ModbusHAL::TCP;
@@ -140,7 +141,7 @@ void readTemperature_Sync() {
         .type = Modbus::REQUEST,
         .fc = Modbus::READ_INPUT_REGISTERS,
         .slaveId = THERMOSTAT_SLAVE_ID,
-        .regAddress = REG_CURRENT_TEMPERATURE,
+        .regAddress = RegAddr::REG_CURRENT_TEMPERATURE,
         .regCount = 1,
         .data = {}
     };
@@ -178,7 +179,7 @@ void readAlarms_Async() {
         .type = Modbus::REQUEST,
         .fc = Modbus::READ_DISCRETE_INPUTS,
         .slaveId = THERMOSTAT_SLAVE_ID,
-        .regAddress = REG_ALARM_START,
+        .regAddress = RegAddr::REG_ALARM_START,
         .regCount = 10,  // Read 10 alarms
         .data = {}
     };
@@ -240,7 +241,7 @@ void readSetpoints_Sync() {
         .type = Modbus::REQUEST,
         .fc = Modbus::READ_HOLDING_REGISTERS,
         .slaveId = THERMOSTAT_SLAVE_ID,
-        .regAddress = REG_TEMPERATURE_SETPOINT,
+        .regAddress = RegAddr::REG_TEMPERATURE_SETPOINT,
         .regCount = 2,  // Read both temperature and humidity setpoints
         .data = {}
     };
@@ -292,7 +293,7 @@ void writeSetpoints_Async() {
         .type       = Modbus::REQUEST,
         .fc         = Modbus::WRITE_MULTIPLE_REGISTERS,
         .slaveId    = THERMOSTAT_SLAVE_ID,
-        .regAddress = REG_TEMPERATURE_SETPOINT,
+        .regAddress = RegAddr::REG_TEMPERATURE_SETPOINT,
         .regCount   = 2,
         .data       = Modbus::packRegisters({225, 450})
     };

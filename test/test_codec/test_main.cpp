@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 
-#include "core/ModbusCodec.h"
+#include "core/ModbusCodec.hpp"
 
 // Helper function to compare two Modbus frames
 bool compareFrames(const Modbus::Frame& f1, const Modbus::Frame& f2) {

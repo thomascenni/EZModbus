@@ -13,10 +13,10 @@ namespace ModbusInterface {
 
 TCP::TCP(ModbusHAL::TCP& hal, Modbus::Role role)
     : _tcpHAL(hal),
-      _rxTxTaskHandle(nullptr),
-      _txBuffer(_txBuf.data(), _txBuf.size()),
       _rxBuffer(_rxBuf.data(), _rxBuf.size()),
-      _currentTransaction()
+      _txBuffer(_txBuf.data(), _txBuf.size()),
+      _currentTransaction(),
+      _rxTxTaskHandle(nullptr)
 {
     _role = role;
 

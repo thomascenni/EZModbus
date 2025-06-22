@@ -1,10 +1,10 @@
 #pragma once
 
 #include <core/ModbusCore.h>
-#include <core/ModbusCodec.h>
-#include <interfaces/ModbusInterface.h>
-#include <utils/ModbusDebug.h>
-#include <core/ModbusTypes.h>
+#include <core/ModbusCodec.hpp>
+#include <interfaces/ModbusInterface.hpp>
+#include <utils/ModbusDebug.hpp>
+#include <core/ModbusTypes.hpp>
 #include <functional>
 #include <memory>
 #include <queue>

@@ -6,9 +6,9 @@
 #pragma once
 
 #include "core/ModbusCore.h"
-#include "core/ModbusCodec.h"
-#include "interfaces/ModbusInterface.h"
-#include "utils/ModbusDebug.h"
+#include "core/ModbusCodec.hpp"
+#include "interfaces/ModbusInterface.hpp"
+#include "utils/ModbusDebug.hpp"
 #include "drivers/ModbusHAL_TCP.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"

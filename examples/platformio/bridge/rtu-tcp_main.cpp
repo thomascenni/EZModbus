@@ -13,23 +13,24 @@
 #define WIFI_PASS "mypassword1234"   // Your password here
 #define MODBUS_TCP_PORT 502        // Port Modbus TCP standard
 
-// Configuration RTU
-#define RS485_SERIAL Serial2
-#define RS485_BAUD_RATE 9600
-#define RS485_CONFIG SERIAL_8N1
-#define RS485_RX_PIN 16
-#define RS485_TX_PIN 17
-#define RS485_DE_PIN 5  // DE/RE pin for RS485 communication
-
 // Aliases for convenience
 using UART = ModbusHAL::UART;
+using UARTConfig = ModbusHAL::UART::Config;
 using TCP = ModbusHAL::TCP;
 using ModbusRTU = ModbusInterface::RTU;
 using ModbusTCP = ModbusInterface::TCP;
 using ModbusBridge = Modbus::Bridge;
 
-// UART port for Modbus RTU & TCP server for Modbus TCP
-UART uart(RS485_SERIAL, RS485_BAUD_RATE, RS485_CONFIG, RS485_RX_PIN, RS485_TX_PIN, RS485_DE_PIN);
+// UART configuration & instance + TCP server instance
+UARTConfig uartConfig = {
+    .serial = Serial2,
+    .baud = 9600,
+    .config = SERIAL_8N1,
+    .rxPin = 16,
+    .txPin = 17,
+    .dePin = 5
+};
+UART uart(uartConfig);
 TCP tcpServer(MODBUS_TCP_PORT);
 
 // Modbus interfaces
@@ -72,6 +73,6 @@ void setup() {
 }
 
 void loop() {
-    // Nothing to do here - the bridge is polled in the background
+    // Nothing to do here - the bridge is managed in the background
     vTaskDelete(NULL);
 }

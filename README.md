@@ -1,6 +1,6 @@
 ## Introduction
 
-`EZModbus` is a lightweight Modbus library designed specifically for ESP32 projects on Arduino & native ESP-IDF frameworks. Built from the ground up with C++, it prioritizes developer experience, flexibility and performance through a fully asynchronous & event-driven approach.
+`EZModbus` is a Modbus library based on FreeRTOS, designed specifically for ESP32 projects on Arduino & native ESP-IDF frameworks. Built from the ground up with C++, it prioritizes developer experience, flexibility and performance through a fully asynchronous & event-driven approach.
 
 ## Documentation
 

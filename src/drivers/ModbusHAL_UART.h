@@ -6,8 +6,8 @@
 #pragma once
 
 #include "core/ModbusCore.h"
-#include "utils/ModbusDebug.h"
-#include "driver/uart.h" // Contient uart_event_t
+#include "utils/ModbusDebug.hpp"
+#include "driver/uart.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -21,6 +21,11 @@ namespace ModbusHAL {
 
 class UART {
 public:
+
+// ===================================================================================
+// CONSTANTS
+// ===================================================================================
+
     // Configuration flags
     static constexpr uint32_t CONFIG_5N1 = UART_DATA_5_BITS | (UART_PARITY_DISABLE << 8) | (UART_STOP_BITS_1 << 16);
     static constexpr uint32_t CONFIG_5N2 = UART_DATA_5_BITS | (UART_PARITY_DISABLE << 8) | (UART_STOP_BITS_2 << 16);
@@ -55,6 +60,41 @@ public:
     static constexpr int WRITE_TIMEOUT_MS = 1000;
     static constexpr int READ_TIMEOUT_MS = 10; 
 
+// ===================================================================================
+// CONFIG STRUCTS
+// ===================================================================================
+
+    #if defined(ARDUINO_ARCH_ESP32)
+    struct ArduinoConfig {
+        HardwareSerial& serial      = Serial0;   // Port (Serial0, Serial1, ...)
+        uint32_t        baud        = 115200;
+        uint32_t        config      = SERIAL_8N1; // SERIAL_xx from Arduino
+        int             rxPin       = UART_PIN_NO_CHANGE;
+        int             txPin       = UART_PIN_NO_CHANGE;
+        int             dePin       = -1;          // -1 disables RS485 helper
+    };
+    #endif
+
+    // Declare IDFConfig even in Arduino build so the user may opt-in.
+    struct IDFConfig {
+        uart_port_t uartNum   = UART_NUM_0;
+        uint32_t    baud      = 115200;
+        uint32_t    config    = CONFIG_8N1;
+        int         rxPin     = UART_PIN_NO_CHANGE;
+        int         txPin     = UART_PIN_NO_CHANGE;
+        int         dePin     = -1;
+    };
+
+    #if defined(ARDUINO_ARCH_ESP32)
+    using Config = ArduinoConfig; // Default alias for this platform
+    #else
+    using Config = IDFConfig;
+    #endif
+
+// ===================================================================================
+// CONSTRUCTORS
+// ===================================================================================
+
     // Vanilla constructor
     UART(uart_port_t uart_num, 
             uint32_t baud_rate, 
@@ -62,6 +102,8 @@ public:
             int pin_rx = UART_PIN_NO_CHANGE, 
             int pin_tx = UART_PIN_NO_CHANGE, 
             int pin_rts_de = -1); // Accept int, will convert to gpio_num_t internally
+
+    explicit UART(const IDFConfig& cfg);
 
     #if defined(ARDUINO_ARCH_ESP32)
     // Arduino constructor
@@ -71,9 +113,15 @@ public:
          int pin_rx,
          int pin_tx,
          int pin_rts_de = -1); // Accept int, will convert to gpio_num_t internally
+
+    explicit UART(const ArduinoConfig& cfg); 
     #endif
 
     ~UART();
+
+// ===================================================================================
+// PUBLIC METHODS
+// ===================================================================================
 
     esp_err_t begin(QueueHandle_t* out_event_queue = nullptr, int intr_alloc_flags = 0);
     void end();
@@ -101,19 +149,31 @@ public:
     esp_err_t flushTxFifo();
 
 private:
-    #if defined(ARDUINO_ARCH_ESP32)
-    static uint32_t convertArduinoConfig(uint32_t arduino_config); // Convert Arduino config to ESP-IDF config
-    #endif
+
+// ===================================================================================
+// PRIVATE MEMBERS
+// ===================================================================================
 
     uart_port_t _uart_num;
     gpio_num_t _pin_rts_de;
     uint32_t _baud_rate;
     uint32_t _config_flags;
-    int _pin_tx;
     int _pin_rx;
+    int _pin_tx;
     QueueHandle_t _internal_event_queue_handle = nullptr;
     bool _is_driver_installed = false;
     uart_config_t _current_hw_config;
+
+// ===================================================================================
+// PRIVATE METHODS
+// ===================================================================================
+
+    static void decode_config_flags(uint32_t flags, uart_word_length_t& data_bits, uart_parity_t& parity, uart_stop_bits_t& stop_bits);
+
+    #if defined(ARDUINO_ARCH_ESP32)
+    static uint32_t convertArduinoConfig(uint32_t arduino_config); // Convert Arduino config to ESP-IDF config
+    static uart_port_t serialArduinoToUartPort(const HardwareSerial* serial_ptr);
+    #endif
 };
 
 } // namespace ModbusHAL

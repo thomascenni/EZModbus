@@ -4,7 +4,7 @@
 #include <EZModbus.h>
 #include <drivers/ModbusHAL_TCP.h>
 #include "test_params.h"
-#include <utils/ModbusLogger.h>
+#include <utils/ModbusLogger.hpp>
 
 
 // Give some time for the application logs to be printed before asserting
@@ -40,9 +40,10 @@ ModbusHAL::TCP halForServer(MODBUS_PORT);
 ModbusInterface::TCP ezm(halForClient, Modbus::CLIENT);
 Modbus::Client client(ezm);
 
-// EZModbus TCP server for testing using the new HAL and Interface
+// EZModbus TCP server for testing with DynamicWordStore (heap allocation)
 ModbusInterface::TCP mbt(halForServer, Modbus::SERVER);
-Modbus::Server server(mbt);
+Modbus::DynamicWordStore dynamicStore(10000);  // Heap-allocated store for TCP server
+Modbus::Server server(mbt, dynamicStore);
 
 uint16_t serverDiscreteInputs[MBT_INIT_START_REG + MBT_INIT_REG_COUNT];
 uint16_t serverCoils[MBT_INIT_START_REG + MBT_INIT_REG_COUNT];
@@ -53,33 +54,37 @@ uint16_t serverInputRegisters[MBT_INIT_START_REG + MBT_INIT_REG_COUNT];
 volatile bool slowMode = false;
 
 // Callbacks
-Modbus::Server::ReadCallback serverReadCallback = [](const Modbus::Server::Register& reg) -> uint16_t {
+Modbus::ReadWordHandler serverReadCallback = [](const Modbus::Word& word, uint16_t* outVals, void* userCtx) -> Modbus::ExceptionCode {
     if (slowMode) {
         vTaskDelay(pdMS_TO_TICKS(100)); // 100 ms delay to keep transaction active
     }
-    switch (reg.type) {
+    switch (word.type) {
         case Modbus::HOLDING_REGISTER:
-            return serverHoldingRegisters[reg.address];
+            outVals[0] = serverHoldingRegisters[word.startAddr];
+            return Modbus::NULL_EXCEPTION;
         case Modbus::INPUT_REGISTER:
-            return serverInputRegisters[reg.address];
+            outVals[0] = serverInputRegisters[word.startAddr];
+            return Modbus::NULL_EXCEPTION;
         case Modbus::COIL:
-            return serverCoils[reg.address];
+            outVals[0] = serverCoils[word.startAddr];
+            return Modbus::NULL_EXCEPTION;
         case Modbus::DISCRETE_INPUT:
-            return serverDiscreteInputs[reg.address];
+            outVals[0] = serverDiscreteInputs[word.startAddr];
+            return Modbus::NULL_EXCEPTION;
         default:
-            return 0;
+            return Modbus::SLAVE_DEVICE_FAILURE;
     }
 };
-Modbus::Server::WriteCallback serverWriteCallback = [](uint16_t value, const Modbus::Server::Register& reg) -> bool {
-    switch (reg.type) {
+Modbus::WriteWordHandler serverWriteCallback = [](const uint16_t* writeVals, const Modbus::Word& word, void* userCtx) -> Modbus::ExceptionCode {
+    switch (word.type) {
         case Modbus::HOLDING_REGISTER:
-            serverHoldingRegisters[reg.address] = value;
-            return true;
+            serverHoldingRegisters[word.startAddr] = writeVals[0];
+            return Modbus::NULL_EXCEPTION;
         case Modbus::COIL:
-            serverCoils[reg.address] = value;
-            return true;
+            serverCoils[word.startAddr] = writeVals[0];
+            return Modbus::NULL_EXCEPTION;
         default:
-            return false;
+            return Modbus::SLAVE_DEVICE_FAILURE;
     }
 };
 
@@ -110,14 +115,6 @@ void ModbusTestServerTask(void* pvParameters) {
         }
     }
     Modbus::Logger::logln("[ModbusTestServerTask] EZModbus TCP interface initialized");
-    auto srvInitRes = server.begin();
-    if (srvInitRes != Modbus::Server::SUCCESS) {
-        Modbus::Logger::logln("[ModbusTestServerTask] EZModbus Server initialization failed");
-        while (true) {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
-    }
-    Modbus::Logger::logln("[ModbusTestServerTask] EZModbus Server initialized");
     
     // Configure registers for each type
     uint8_t regTypes[] = {
@@ -126,27 +123,55 @@ void ModbusTestServerTask(void* pvParameters) {
         Modbus::COIL,
         Modbus::DISCRETE_INPUT
     };
+
+    Modbus::Logger::logln("Adding words to ModbusTestServer...");
+    uint32_t startTime = millis();
+    ssize_t freeHeapBefore = ESP.getFreeHeap();
+    ssize_t freePsramBefore = BOARD_HAS_PSRAM ? ESP.getFreePsram() : 0;
     
     for (int i = MBT_INIT_START_REG; i < MBT_INIT_START_REG + MBT_INIT_REG_COUNT; i++) {
         for (uint8_t rt : regTypes) {
-            Modbus::Server::Register reg;
-            reg.type = (Modbus::RegisterType)rt;
-            reg.address = i;
-            reg.readCb = serverReadCallback;
+            Modbus::Word word;
+            word.type = (Modbus::RegisterType)rt;
+            word.startAddr = i;
+            word.nbRegs = 1;
+            word.value = nullptr;
+            word.readHandler = serverReadCallback;
             if (rt == Modbus::HOLDING_REGISTER || rt == Modbus::COIL) {
-                reg.writeCb = serverWriteCallback;
+                word.writeHandler = serverWriteCallback;
+            } else {
+                word.writeHandler = nullptr;
             }
-            server.addRegister(reg);
+            server.addWord(word);
         }
     }
+    uint32_t endTime = millis();
+    ssize_t freeHeapAfter = ESP.getFreeHeap();
+    ssize_t freePsramAfter = BOARD_HAS_PSRAM ? ESP.getFreePsram() : 0;
+    ssize_t memoryUsed = freeHeapBefore - freeHeapAfter;
+    ssize_t psramUsed = freePsramBefore - freePsramAfter;
+    if (BOARD_HAS_PSRAM) {
+        Modbus::Logger::logf("Added %d words in %d ms, consuming %zd bytes of heap and %zd bytes of PSRAM\n", MBT_INIT_REG_COUNT * 4, endTime - startTime, memoryUsed, psramUsed);
+    } else {
+        Modbus::Logger::logf("Added %d words in %d ms, consuming %zd bytes of heap\n", MBT_INIT_REG_COUNT * 4, endTime - startTime, memoryUsed);
+    }
+
+    // Initialize Modbus::Server application
+    auto srvInitRes = server.begin();
+    if (srvInitRes != Modbus::Server::SUCCESS) {
+        Modbus::Logger::logln("[ModbusTestServerTask] EZModbus Server initialization failed");
+        while (true) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+    Modbus::Logger::logln("[ModbusTestServerTask] EZModbus Server initialized");
 
     // Set initial values
     resetModbusTestServerRegisters();
 
-    // Poll the Modbus test server continuously (dummy server)
+    // Server polling is handled by interface callbacks - no explicit poll needed
     while (true) {
         modbusTestServerTaskInitialized = true;
-        server.poll();
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

@@ -7,8 +7,8 @@
 
 // Core components
 #include "core/ModbusCore.h"
-#include "core/ModbusCodec.h"
-#include "interfaces/ModbusInterface.h"
+#include "core/ModbusCodec.hpp"
+#include "interfaces/ModbusInterface.hpp"
 
 // Drivers
 #include "drivers/ModbusHAL_UART.h"
@@ -21,4 +21,4 @@
 // Application components
 #include "apps/ModbusClient.h"
 #include "apps/ModbusServer.h"
-#include "apps/ModbusBridge.h"
+#include "apps/ModbusBridge.hpp"

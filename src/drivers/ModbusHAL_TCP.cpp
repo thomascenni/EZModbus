@@ -4,7 +4,7 @@
  */
 
 #include "drivers/ModbusHAL_TCP.h"
-#include "core/ModbusTypes.h" // For Mutex, Lock, TIME_MS, WAIT_MS
+#include "core/ModbusTypes.hpp" // For Mutex, Lock, TIME_MS, WAIT_MS
 
 #include <sys/socket.h>
 #include <netdb.h>
@@ -16,8 +16,8 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
-#include <vector>
-#include <algorithm> // For std::max, std::remove, std::remove_if
+#include <stddef.h> // For size_t
+#include <algorithm> // For std::max
 
 namespace ModbusHAL {
 
@@ -30,6 +30,8 @@ TCP::TCP()
       _isRunning(false),
       _cfgMode(CfgMode::UNINIT),
       _cfgPort(0) {
+    _activeSocketCount = 0;
+    _cfgIP[0] = '\0'; // Clear the IP string
 }
 
 TCP::~TCP() {
@@ -58,11 +60,12 @@ void TCP::stop() {
             ::close(_clientSocket);
             _clientSocket = -1;
         }
-        for (int sock : _activeSockets) {
+        for (size_t i = 0; i < _activeSocketCount; ++i) {
+            int sock = _activeSockets[i];
             Modbus::Debug::LOG_MSGF("Closing active client socket %d", sock);
             ::close(sock);
         }
-        _activeSockets.clear();
+        _activeSocketCount = 0;
     }
 
 
@@ -345,7 +348,8 @@ void TCP::runTcpTask() {
                 // Modbus::Debug::LOG_MSGF("Client: Added client_socket %d to fd_set", _clientSocket);
             }
 
-            for (int sock : _activeSockets) { // Primarily for server mode client connections
+            for (size_t i = 0; i < _activeSocketCount; ++i) {
+                int sock = _activeSockets[i]; // Primarily for server mode client connections
                 FD_SET(sock, &readfds);
                 max_fd = std::max(max_fd, sock);
                 // Modbus::Debug::LOG_MSGF("Server: Added active_socket %d to fd_set", sock);
@@ -391,14 +395,14 @@ void TCP::runTcpTask() {
                 int new_socket = ::accept(_listenSocket, (struct sockaddr*)&client_addr, &client_len);
 
                 if (new_socket >= 0) {
-                    if (_activeSockets.size() < MAX_ACTIVE_SOCKETS) {
+                    if (_activeSocketCount < MAX_ACTIVE_SOCKETS) {
                         // Set new socket to non-blocking
                         int flags = fcntl(new_socket, F_GETFL, 0);
                         if (flags != -1 && fcntl(new_socket, F_SETFL, flags | O_NONBLOCK) != -1) {
-                            _activeSockets.push_back(new_socket);
+                            _activeSockets[_activeSocketCount++] = new_socket;
                             char client_ip[INET_ADDRSTRLEN];
                             inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-                            Modbus::Debug::LOG_MSGF("New connection from %s on socket %d. Active clients: %d", client_ip, new_socket, _activeSockets.size());
+                            Modbus::Debug::LOG_MSGF("New connection from %s on socket %d. Active clients: %d", client_ip, new_socket, static_cast<int>(_activeSocketCount));
                         } else {
                             Modbus::Debug::LOG_MSGF("Failed to set new client socket %d to non-blocking, errno: %d. Closing.", new_socket, errno);
                             ::close(new_socket);
@@ -416,16 +420,23 @@ void TCP::runTcpTask() {
             }
 
             // 2. Simply check which sockets have data to read
-            std::vector<int> sockets_to_check = _activeSockets;
-            if (!_isServer && _clientSocket != -1) {
-                sockets_to_check.clear();
-                sockets_to_check.push_back(_clientSocket);
+            // Build the list of sockets to check for data
+            int sockets_to_check[MAX_ACTIVE_SOCKETS + 1];
+            size_t check_count = 0;
+            if (_isServer) {
+                for (size_t i = 0; i < _activeSocketCount; ++i) {
+                    sockets_to_check[check_count++] = _activeSockets[i];
+                }
+            } else if (_clientSocket != -1) {
+                sockets_to_check[check_count++] = _clientSocket;
             }
 
-            std::vector<int> sockets_to_remove;
+            int sockets_to_remove[MAX_ACTIVE_SOCKETS];
+            size_t remove_count = 0;
 
             uint8_t dummy;
-            for (int sock : sockets_to_check) {
+            for (size_t idx = 0; idx < check_count; ++idx) {
+                int sock = sockets_to_check[idx];
                 if (!FD_ISSET(sock, &readfds)) continue;
 
                 ssize_t peek = ::recv(sock, &dummy, 1, MSG_PEEK);
@@ -436,17 +447,17 @@ void TCP::runTcpTask() {
                     }
                 } else if (peek == 0) {
                     Modbus::Debug::LOG_MSGF("Socket %d closed by peer.", sock);
-                    sockets_to_remove.push_back(sock);
+                    sockets_to_remove[remove_count++] = sock;
                 } else {
                     if (errno != EAGAIN && errno != EWOULDBLOCK) {
                         Modbus::Debug::LOG_MSGF("recv(MSG_PEEK) error on socket %d, errno: %d. Closing.", sock, errno);
-                        sockets_to_remove.push_back(sock);
+                        sockets_to_remove[remove_count++] = sock;
                     }
                 }
             }
 
-            for (int s : sockets_to_remove) {
-                closeSocket(s);
+            for (size_t i = 0; i < remove_count; ++i) {
+                closeSocket(sockets_to_remove[i]);
             }
 
         } // Unlock socketsMutex
@@ -460,10 +471,16 @@ void TCP::closeSocket(int sock) {
     Modbus::Debug::LOG_MSGF("Closing socket %d.", sock);
     ::close(sock);
     if (_isServer) {
-        auto it = std::remove(_activeSockets.begin(), _activeSockets.end(), sock);
-        if (it != _activeSockets.end()) {
-            _activeSockets.erase(it, _activeSockets.end());
-            Modbus::Debug::LOG_MSGF("Removed socket %d from active server clients. Count: %d", sock, _activeSockets.size());
+        for (size_t i = 0; i < _activeSocketCount; ++i) {
+            if (_activeSockets[i] == sock) {
+                // Shift remaining sockets left
+                for (size_t j = i; j + 1 < _activeSocketCount; ++j) {
+                    _activeSockets[j] = _activeSockets[j + 1];
+                }
+                --_activeSocketCount;
+                Modbus::Debug::LOG_MSGF("Removed socket %d from active server clients. Count: %d", sock, static_cast<int>(_activeSocketCount));
+                break;
+            }
         }
     } else { // Client mode
         if (sock == _clientSocket) {
@@ -531,7 +548,7 @@ bool TCP::sendMsg(const uint8_t* payload, const size_t len, const int destSocket
 size_t TCP::getActiveSocketCount() {
     Lock guard(_socketsMutex);
     if (_isServer) {
-        return _activeSockets.size();
+        return _activeSocketCount;
     } else {
         return (_clientSocket != -1) ? 1 : 0;
     }
@@ -555,7 +572,12 @@ TCP::TCP(uint16_t serverPort) : TCP() {
 // Client ctor
 TCP::TCP(const char* serverIP, uint16_t port) : TCP() {
     _cfgMode = CfgMode::CLIENT;
-    _cfgIP = serverIP ? serverIP : "";
+    if (serverIP) {
+        strncpy(_cfgIP, serverIP, sizeof(_cfgIP) - 1);
+        _cfgIP[sizeof(_cfgIP) - 1] = '\0';
+    } else {
+        _cfgIP[0] = '\0';
+    }
     _cfgPort = port;
 }
 
@@ -564,7 +586,7 @@ bool TCP::begin() {
         case CfgMode::SERVER:
             return beginServer(_cfgPort);
         case CfgMode::CLIENT:
-            return beginClient(_cfgIP.c_str(), _cfgPort);
+            return beginClient(_cfgIP, _cfgPort);
         default:
             return false; // No config
     }

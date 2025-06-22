@@ -6,7 +6,7 @@
 #pragma once
 
 #include "core/ModbusCore.h"
-#include "utils/ModbusDebug.h"
+#include "utils/ModbusDebug.hpp"
 
 #include <sys/socket.h>
 #include <netdb.h>
@@ -15,7 +15,6 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include "esp_netif.h"
-#include <string>
 
 namespace ModbusHAL {
 
@@ -85,7 +84,9 @@ private:
     // Internal state
     TaskHandle_t _tcpTaskHandle;
     QueueHandle_t _rxQueue;
-    std::vector<int> _activeSockets; // Stores active client sockets for server, or the server socket for client
+    // Fixed-size storage for active sockets (used in server mode)
+    int _activeSockets[MAX_ACTIVE_SOCKETS] = {0};
+    size_t _activeSocketCount = 0; // Current number of active sockets
     int _listenSocket;              // Server listen socket
     int _clientSocket;              // Client mode connected socket
     bool _isServer;                 // True if running in server mode
@@ -96,7 +97,7 @@ private:
 
     // Config stored if constructor parameters are provided
     CfgMode _cfgMode = CfgMode::UNINIT;
-    std::string _cfgIP;
+    char _cfgIP[16] = {0}; // Enough to hold standard dotted IPv4 string
     uint16_t _cfgPort = 0;
 };
 

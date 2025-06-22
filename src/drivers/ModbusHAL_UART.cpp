@@ -11,18 +11,7 @@
 
 namespace ModbusHAL {
 
-/* @brief Decode the config flags into data bits, parity, and stop bits 
- * @param flags: The config flags
- * @param data_bits: The data bits
- * @param parity: The parity
- * @param stop_bits: The stop bits
- */
-static void decode_config_flags(uint32_t flags, uart_word_length_t& data_bits, uart_parity_t& parity, uart_stop_bits_t& stop_bits) {
-    data_bits = (uart_word_length_t)(flags & 0xFF);
-    parity = (uart_parity_t)((flags >> 8) & 0xFF);
-    stop_bits = (uart_stop_bits_t)((flags >> 16) & 0xFF);
-}
-
+// Vanilla constructor: always available
 UART::UART(uart_port_t uart_num, 
                  uint32_t baud_rate, 
                  uint32_t config_flags, 
@@ -33,10 +22,10 @@ UART::UART(uart_port_t uart_num,
       _pin_rts_de((pin_rts_de == -1) ? GPIO_NUM_NC : static_cast<gpio_num_t>(pin_rts_de)), 
       _baud_rate(baud_rate),
       _config_flags(config_flags),
-      _pin_tx(pin_tx),
       _pin_rx(pin_rx),
+      _pin_tx(pin_tx),
       _is_driver_installed(false) {
-        // Initialisation de _current_hw_config avec les paramètres fournis
+        // Initialize _current_hw_config with the provided parameters
         decode_config_flags(_config_flags, _current_hw_config.data_bits, _current_hw_config.parity, _current_hw_config.stop_bits);
         _current_hw_config.baud_rate = _baud_rate;
         _current_hw_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
@@ -48,91 +37,43 @@ UART::UART(uart_port_t uart_num,
         Modbus::Debug::LOG_MSGF("Constructor for port %d", _uart_num);
 }
 
+// Constructor from IDFConfig struct
+UART::UART(const IDFConfig& cfg)
+    : UART(cfg.uartNum,
+           cfg.baud,
+           cfg.config,
+           cfg.rxPin,
+           cfg.txPin,
+           cfg.dePin) {}
+
 #if defined(ARDUINO_ARCH_ESP32)
-
-/* @brief Convert Arduino config to ESP-IDF config
- * @param arduino_config: The Arduino config (SerialConfig type: e.g. SERIAL_8N1)
- * @return The "Vanilla" config (see CONFIG_xxx constants)
- */
-uint32_t UART::convertArduinoConfig(uint32_t arduino_config) {
-    switch (arduino_config) {
-        // 8-bit data
-        case SERIAL_8N1: return CONFIG_8N1;
-        case SERIAL_8N2: return CONFIG_8N2;
-        case SERIAL_8E1: return CONFIG_8E1;
-        case SERIAL_8E2: return CONFIG_8E2;
-        case SERIAL_8O1: return CONFIG_8O1;
-        case SERIAL_8O2: return CONFIG_8O2;
-        // 7-bit data
-        case SERIAL_7N1: return CONFIG_7N1;
-        case SERIAL_7N2: return CONFIG_7N2;
-        case SERIAL_7E1: return CONFIG_7E1;
-        case SERIAL_7E2: return CONFIG_7E2;
-        case SERIAL_7O1: return CONFIG_7O1;
-        case SERIAL_7O2: return CONFIG_7O2;
-        // 6-bit data
-        case SERIAL_6N1: return CONFIG_6N1;
-        case SERIAL_6N2: return CONFIG_6N2;
-        case SERIAL_6E1: return CONFIG_6E1;
-        case SERIAL_6E2: return CONFIG_6E2;
-        case SERIAL_6O1: return CONFIG_6O1;
-        case SERIAL_6O2: return CONFIG_6O2;
-        // 5-bit data
-        case SERIAL_5N1: return CONFIG_5N1;
-        case SERIAL_5N2: return CONFIG_5N2;
-        case SERIAL_5E1: return CONFIG_5E1;
-        case SERIAL_5E2: return CONFIG_5E2;
-        case SERIAL_5O1: return CONFIG_5O1;
-        case SERIAL_5O2: return CONFIG_5O2;
-        default:
-            Modbus::Debug::LOG_MSGF("Unknown Arduino UART config: 0x%X. Defaulting to 8N1.", arduino_config);
-            return CONFIG_8N1;
-    }
-}
-
+// Arduino constructor: only available for Arduino framework
 UART::UART(HardwareSerial& serial_dev,
              uint32_t baud_rate,
              uint32_t arduino_config,
              int pin_rx,
              int pin_tx,
-             int pin_rts_de)
-    : UART(
-          // Determine uart_port_t
-          ([&]() -> uart_port_t { 
-              // Serial0 always exists and is a HardwareSerial instance.
-              if (&serial_dev == &Serial0) {
-                  return UART_NUM_0;
-              }
-
-            #if SOC_UART_NUM > 1 // Check if Serial1 is defined (all ESP32 chips have at least 2 UARTs)
-              // Serial1 is declared in HardwareSerial.h only if SOC_UART_NUM > 1.
-              if (&serial_dev == &Serial1) {
-                  return UART_NUM_1;
-              }
-            #endif
-
-            #if SOC_UART_NUM > 2 // Check if Serial2 is defined (ESP32 classic & ESP32-S3 have 3 UARTs)
-              // Serial2 is declared in HardwareSerial.h only if SOC_UART_NUM > 2.
-              if (&serial_dev == &Serial2) {
-                  return UART_NUM_2;
-              }
-            #endif
-              // Fallback or error if it's not one of the global objects.
-              // This situation should ideally not happen if users pass Serial0, Serial1, or Serial2.
-              // If they create a HardwareSerial instance manually, e.g. HardwareSerial mySerial(X);
-              // then they should use the other constructor of ModbusHAL::UART directly with the port number.
-              Modbus::Debug::LOG_MSG("Could not identify Serial UART port, defaulting to UART_NUM_0.");
-              return UART_NUM_0; // Fallback to UART_NUM_0 with a warning. Consider if another action is better.
-          })(),
+             int pin_rts_de) : UART(
+          serialArduinoToUartPort(&serial_dev), // Determine uart_port_t from HardwareSerial*
           baud_rate,
           convertArduinoConfig(arduino_config),
-          pin_tx,
           pin_rx,
+          pin_tx,
           pin_rts_de) // Pass int directly, conversion handled by the delegated constructor
 {
     // The actual initialization is done by the delegated constructor.
     Modbus::Debug::LOG_MSGF("Arduino constructor for UART port %d", getPort());
 }
+
+// Constructor from ArduinoConfig struct
+UART::UART(const ArduinoConfig& cfg)
+    : UART(cfg.serial,
+           cfg.baud,
+           cfg.config,
+           cfg.rxPin,
+           cfg.txPin,
+           cfg.dePin) {}
+
 #endif // ARDUINO_ARCH_ESP32
 
 UART::~UART() {
@@ -393,10 +334,88 @@ esp_err_t UART::setTimeoutMicroseconds(uint64_t timeout_us) {
     // Configure the timeout
     esp_err_t err = setTimeoutThreshold(threshold);
     if (err == ESP_OK) {
-        Modbus::Debug::LOG_MSGF("UART timeout set to: %llu us -> %d UART symbols threshold", timeout_us, threshold);
+        Modbus::Debug::LOG_MSGF("UART timeout set to: %u us -> %d UART symbols threshold", (uint32_t)timeout_us, threshold);
     }
     Modbus::Debug::LOG_MSGF("Failed to set UART timeout: %s", esp_err_to_name(err));
     return err;
 }
+
+
+/* @brief Decode the config flags into data bits, parity, and stop bits 
+ * @param flags: The config flags
+ * @param data_bits: The data bits
+ * @param parity: The parity
+ * @param stop_bits: The stop bits
+ */
+void UART::decode_config_flags(uint32_t flags, uart_word_length_t& data_bits, uart_parity_t& parity, uart_stop_bits_t& stop_bits) {
+    data_bits = (uart_word_length_t)(flags & 0xFF);
+    parity = (uart_parity_t)((flags >> 8) & 0xFF);
+    stop_bits = (uart_stop_bits_t)((flags >> 16) & 0xFF);
+}
+
+
+#if defined(ARDUINO_ARCH_ESP32)
+/* @brief Convert Arduino config to ESP-IDF config
+ * @param arduino_config: The Arduino config (SerialConfig type: e.g. SERIAL_8N1)
+ * @return The "Vanilla" config (see CONFIG_xxx constants)
+ */
+uint32_t UART::convertArduinoConfig(uint32_t arduino_config) {
+    switch (arduino_config) {
+        // 8-bit data
+        case SERIAL_8N1: return CONFIG_8N1;
+        case SERIAL_8N2: return CONFIG_8N2;
+        case SERIAL_8E1: return CONFIG_8E1;
+        case SERIAL_8E2: return CONFIG_8E2;
+        case SERIAL_8O1: return CONFIG_8O1;
+        case SERIAL_8O2: return CONFIG_8O2;
+        // 7-bit data
+        case SERIAL_7N1: return CONFIG_7N1;
+        case SERIAL_7N2: return CONFIG_7N2;
+        case SERIAL_7E1: return CONFIG_7E1;
+        case SERIAL_7E2: return CONFIG_7E2;
+        case SERIAL_7O1: return CONFIG_7O1;
+        case SERIAL_7O2: return CONFIG_7O2;
+        // 6-bit data
+        case SERIAL_6N1: return CONFIG_6N1;
+        case SERIAL_6N2: return CONFIG_6N2;
+        case SERIAL_6E1: return CONFIG_6E1;
+        case SERIAL_6E2: return CONFIG_6E2;
+        case SERIAL_6O1: return CONFIG_6O1;
+        case SERIAL_6O2: return CONFIG_6O2;
+        // 5-bit data
+        case SERIAL_5N1: return CONFIG_5N1;
+        case SERIAL_5N2: return CONFIG_5N2;
+        case SERIAL_5E1: return CONFIG_5E1;
+        case SERIAL_5E2: return CONFIG_5E2;
+        case SERIAL_5O1: return CONFIG_5O1;
+        case SERIAL_5O2: return CONFIG_5O2;
+        default:
+            Modbus::Debug::LOG_MSGF("Unknown Arduino UART config: 0x%X. Defaulting to 8N1.", arduino_config);
+            return CONFIG_8N1;
+    }
+}
+
+/* @brief Map a HardwareSerial instance to its corresponding uart_port_t
+ * @param serial_ptr: pointer to the HardwareSerial (Serial0, Serial1, Serial2)
+ * @return uart_port_t corresponding to the hardware instance (defaults to UART_NUM_0)
+ */
+uart_port_t UART::serialArduinoToUartPort(const HardwareSerial* serial_ptr) {
+    // Serial0 always exists and is a HardwareSerial instance.
+    if (serial_ptr == &Serial0) return UART_NUM_0;
+    #if SOC_UART_NUM > 1
+        if (serial_ptr == &Serial1) return UART_NUM_1;
+    #endif
+    #if SOC_UART_NUM > 2
+        if (serial_ptr == &Serial2) return UART_NUM_2;
+    #endif
+    // Fallback or error if it's not one of the global objects.
+    // This situation should ideally not happen if users pass Serial0, Serial1, or Serial2.
+    // If they create a HardwareSerial instance manually, e.g. HardwareSerial mySerial(X); they should
+    // use the other UART constructor directly with the port number.
+    Modbus::Debug::LOG_MSG("Could not identify Serial UART port, defaulting to UART_NUM_0.");
+    return UART_NUM_0;
+}
+
+#endif // ARDUINO_ARCH_ESP32
 
 } // namespace ModbusHAL

@@ -4,7 +4,7 @@
 #include "test_params.h"
 #include "dummy_interface.h"
 #include <WiFi.h>
-#include <utils/ModbusLogger.h>
+#include <utils/ModbusLogger.hpp>
 // Give some time for the application logs to be printed before asserting
 
 #ifdef EZMODBUS_DEBUG
@@ -45,36 +45,43 @@ Modbus::Bridge bridge(ezm1, ezm2);
 
 // EZModbus RTU server acting as a remote Modbus RTU server + list of registers
 ModbusInterface::RTU mbt(mbtUart, Modbus::SERVER);
-Modbus::Server server(mbt);
+Modbus::DynamicWordStore wordStore(10000);
+Modbus::Server server(mbt, wordStore);
 uint16_t serverDiscreteInputs[MBT_INIT_START_REG + MBT_INIT_REG_COUNT];
 uint16_t serverCoils[MBT_INIT_START_REG + MBT_INIT_REG_COUNT];
 uint16_t serverHoldingRegisters[MBT_INIT_START_REG + MBT_INIT_REG_COUNT];
 uint16_t serverInputRegisters[MBT_INIT_START_REG + MBT_INIT_REG_COUNT];
-Modbus::Server::ReadCallback serverReadCallback = [](const Modbus::Server::Register& reg) -> uint16_t {
-    switch (reg.type) {
+Modbus::ReadWordHandler serverReadHandler = [](const Modbus::Word& word, uint16_t* outVals, void* userCtx) -> Modbus::ExceptionCode {
+    switch (word.type) {
         case Modbus::HOLDING_REGISTER:
-            return serverHoldingRegisters[reg.address];
+            outVals[0] = serverHoldingRegisters[word.startAddr];
+            break;
         case Modbus::INPUT_REGISTER:
-            return serverInputRegisters[reg.address];
+            outVals[0] = serverInputRegisters[word.startAddr];
+            break;
         case Modbus::COIL:
-            return serverCoils[reg.address];
+            outVals[0] = serverCoils[word.startAddr];
+            break;
         case Modbus::DISCRETE_INPUT:
-            return serverDiscreteInputs[reg.address];
+            outVals[0] = serverDiscreteInputs[word.startAddr];
+            break;
         default:
-            return 0;
+            return Modbus::ILLEGAL_DATA_ADDRESS;
     }
+    return Modbus::NULL_EXCEPTION;
 };
-Modbus::Server::WriteCallback serverWriteCallback = [](uint16_t value, const Modbus::Server::Register& reg) -> bool {
-    switch (reg.type) {
+Modbus::WriteWordHandler serverWriteHandler = [](const uint16_t* writeVals, const Modbus::Word& word, void* userCtx) -> Modbus::ExceptionCode {
+    switch (word.type) {
         case Modbus::HOLDING_REGISTER:
-            serverHoldingRegisters[reg.address] = value;
-            return true;
+            serverHoldingRegisters[word.startAddr] = writeVals[0];
+            break;
         case Modbus::COIL:
-            serverCoils[reg.address] = value;
-            return true;
+            serverCoils[word.startAddr] = writeVals[0];
+            break;
         default:
-            return false;
+            return Modbus::ILLEGAL_FUNCTION;
     }
+    return Modbus::NULL_EXCEPTION;
 };
 
 // Tasks
@@ -107,12 +114,6 @@ void ModbusTestServerTask(void* pvParameters) {
         while (true) { vTaskDelay(pdMS_TO_TICKS(1000)); }
     }
     Modbus::Logger::logln("[ModbusTestServerTask] EZModbus RTU interface initialized");
-    auto srvInitRes = server.begin();
-    if (srvInitRes != Modbus::Server::SUCCESS) {
-        Modbus::Logger::logln("[ModbusTestServerTask] EZModbus Server initialization failed");
-        while (true) { vTaskDelay(pdMS_TO_TICKS(1000)); }
-    }
-    Modbus::Logger::logln("[ModbusTestServerTask] EZModbus Server initialized");
     
     // Configure registers for each type
     uint8_t regTypes[] = {
@@ -124,24 +125,35 @@ void ModbusTestServerTask(void* pvParameters) {
     
     for (int i = MBT_INIT_START_REG; i < MBT_INIT_START_REG + MBT_INIT_REG_COUNT; i++) {
         for (uint8_t rt : regTypes) {
-            Modbus::Server::Register reg;
-            reg.type = (Modbus::RegisterType)rt;
-            reg.address = i;
-            reg.readCb = serverReadCallback;
+            Modbus::Word word;
+            word.type = (Modbus::RegisterType)rt;
+            word.startAddr = i;
+            word.nbRegs = 1;
+            word.value = nullptr;
+            word.readHandler = serverReadHandler;
             if (rt == Modbus::HOLDING_REGISTER || rt == Modbus::COIL) {
-                reg.writeCb = serverWriteCallback;
+                word.writeHandler = serverWriteHandler;
+            } else {
+                word.writeHandler = nullptr;
             }
-            server.addRegister(reg);
+            server.addWord(word);
         }
     }
+
+    // Initialize ModbusServer
+    auto srvInitRes = server.begin();
+    if (srvInitRes != Modbus::Server::SUCCESS) {
+        Modbus::Logger::logln("[ModbusTestServerTask] EZModbus Server initialization failed");
+        while (true) { vTaskDelay(pdMS_TO_TICKS(1000)); }
+    }
+    Modbus::Logger::logln("[ModbusTestServerTask] EZModbus Server initialized");
 
     // Set initial values
     resetModbusTestServerRegisters();
 
-    // Poll the Modbus test server continuously (dummy server)
+    // Server polling is handled by interface callbacks - no explicit poll needed
     while (true) {
         modbusTestServerTaskInitialized = true;
-        server.poll();
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

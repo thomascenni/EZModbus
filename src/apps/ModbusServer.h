@@ -6,8 +6,9 @@
 #pragma once
 
 #include "core/ModbusCore.h"
-#include "interfaces/ModbusInterface.h"
-#include "utils/ModbusDebug.h"
+#include "core/ModbusWord.hpp"
+#include "interfaces/ModbusInterface.hpp"
+#include "utils/ModbusDebug.hpp"
 
 namespace Modbus {
 
@@ -18,8 +19,8 @@ public:
     // ===================================================================================
 
     static constexpr uint32_t MAX_REGISTERS = 65535;
-    static constexpr uint32_t RSV_REGISTERS = 100;
     static constexpr uint32_t RESPONSE_TX_TIMEOUT_MS = 1000;
+    static constexpr size_t MAX_WORD_SIZE = 8; // max no. registers per word
 
     // ===================================================================================
     // RESULT TYPES
@@ -28,13 +29,13 @@ public:
     enum Result {
         SUCCESS,
         NODATA,
-        ERR_REG_BUSY,
-        ERR_REG_OVERFLOW,
-        ERR_REG_INVALID_TYPE,
-        ERR_REG_MISSING_READCB,
-        ERR_REG_MISSING_WRITECB,
-        ERR_REG_READONLY_WRITECB,
-        ERR_REG_NOT_FOUND,
+        ERR_WORD_BUSY,
+        ERR_WORD_OVERFLOW,
+        ERR_WORD_INVALID,
+        ERR_WORD_DIRECT_PTR,
+        ERR_WORD_HANDLER,
+        ERR_WORD_OVERLAP,
+        ERR_RCV_UNKNOWN_WORD,
         ERR_RCV_BUSY,
         ERR_RCV_INVALID_TYPE,
         ERR_RCV_WRONG_SLAVE_ID,
@@ -50,53 +51,52 @@ public:
         switch (res) {
             case SUCCESS: return "success";
             case NODATA: return "no data";
-            case ERR_REG_BUSY: return "busy register store";
-            case ERR_REG_OVERFLOW: return "stored too many registers";
-            case ERR_REG_INVALID_TYPE: return "invalid register type";
-            case ERR_REG_MISSING_READCB: return "missing read callback";
-            case ERR_REG_MISSING_WRITECB: return "missing write callback";
-            case ERR_REG_READONLY_WRITECB: return "readonly register w/ write callback";
+            case ERR_WORD_BUSY: return "busy word store";
+            case ERR_WORD_OVERFLOW: return "stored too many words";
+            case ERR_WORD_INVALID: return "invalid word";
+            case ERR_WORD_DIRECT_PTR: return "forbidden direct pointer";
+            case ERR_WORD_HANDLER: return "malformed handlers";
+            case ERR_WORD_OVERLAP: return "word overlaps with existing word";
+            case ERR_RCV_UNKNOWN_WORD: return "unknown word";
             case ERR_RCV_BUSY: return "incoming request: busy";
-            case ERR_RCV_INVALID_TYPE: return "received invalid request type";
-            case ERR_RCV_WRONG_SLAVE_ID: return "wrong slave ID";
-            case ERR_RCV_ILLEGAL_FUNCTION: return "illegal function";
-            case ERR_RCV_ILLEGAL_DATA_ADDRESS: return "illegal data address";
-            case ERR_RCV_ILLEGAL_DATA_VALUE: return "illegal data value";
-            case ERR_RCV_SLAVE_DEVICE_FAILURE: return "slave device failure";
-            case ERR_RSP_TX_FAILED: return "transmit failed";
+            case ERR_RCV_INVALID_TYPE: return "received invalid request";
+            case ERR_RCV_WRONG_SLAVE_ID: return "wrong slave ID in rcvd frame";
+            case ERR_RCV_ILLEGAL_FUNCTION: return "illegal function in rcvd frame";
+            case ERR_RCV_ILLEGAL_DATA_ADDRESS: return "illegal data address in rcvd frame";
+            case ERR_RCV_ILLEGAL_DATA_VALUE: return "illegal data value in rcvd frame";
+            case ERR_RCV_SLAVE_DEVICE_FAILURE: return "slave device failure on rcvd frame";
+            case ERR_RSP_TX_FAILED: return "transmit response failed";
             case ERR_NOT_INITIALIZED: return "server not initialized";
             case ERR_INIT_FAILED: return "init failed";
             default: return "unknown error";
         }
     }
 
-    /* @brief Helper to cast an error
-     * @return The error result
-     * @note Captures point of call context & prints a log message when debug 
-     * is enabled. No overhead when debug is disabled (except for
-     * the desc string, if any)
-     */
+    // Helper to cast an error
+    // - Returns a Result
+    // - Captures point of call context & prints a log message when debug 
+    // is enabled. No overhead when debug is disabled (except for
+    // the desc string, if any)
     static inline Result Error(Result res, const char* desc = nullptr
                         #ifdef EZMODBUS_DEBUG
                         , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
                         #endif
                         ) {
         #ifdef EZMODBUS_DEBUG
-            std::string logMessage = std::string("Error: ") + toString(res);
             if (desc && *desc != '\0') {
-                logMessage += std::string(" (") + desc + ")";
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Error: %s (%s)", toString(res), desc);
+            } else {
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Error: %s", toString(res));
             }
-            Modbus::Debug::LOG_MSG(logMessage, ctx);
         #endif
         return res;
     }
 
-    /* @brief Helper to cast a success
-     * @return Result::SUCCESS
-     * @note Captures point of call context & prints a log message when debug 
-     * is enabled. No overhead when debug is disabled (except for
-     * the desc string, if any)
-     */
+    // Helper to cast a success
+    // - Returns Result::SUCCESS
+    // - Captures point of call context & prints a log message when debug 
+    // is enabled. No overhead when debug is disabled (except for
+    // the desc string, if any)
     static inline Result Success(const char* desc = nullptr
                           #ifdef EZMODBUS_DEBUG
                           , Modbus::Debug::CallCtx ctx = Modbus::Debug::CallCtx()
@@ -104,111 +104,51 @@ public:
                           ) {
         #ifdef EZMODBUS_DEBUG
             if (desc && *desc != '\0') {
-                std::string logMessage = std::string("Success: ") + desc;
-                Modbus::Debug::LOG_MSG(logMessage, ctx);
+                Modbus::Debug::LOG_MSGF_CTX(ctx, "Success: %s", desc);
             }
         #endif
         return SUCCESS;
     }
 
     // ===================================================================================
-    // DATA STRUCTURES
-    // ===================================================================================
-
-    struct Register; // Forward declaration
-
-    // Callback types
-    // READ (lambda): takes the register context as argument and returns the value
-    using ReadCallback = std::function<uint16_t(const Register&)>;
-    // WRITE (lambda): takes the value & register context as arguments and returns a bool (write success/failure)
-    using WriteCallback = std::function<bool(uint16_t, const Register&)>;
-    // DIRECT ACCESS: simple function pointers for direct access to the value pointer (static allocation)
-    using ReadCallbackC = uint16_t (*)(const Server::Register& r);
-    using WriteCallbackC = bool (*)(uint16_t value, const Server::Register& r);
-
-    /* @brief Public API structure to define a register
-     * @note If direct access pointer is defined, it will be used in priority
-     */
-    struct Register {
-        // Register metadata
-        Modbus::RegisterType type = Modbus::NULL_RT;   // Type of register
-        uint16_t address = 0;                          // Register address
-        const char* name = "";                         // Register name (for debugging/logging)
-
-        // Register value (2 options) - if direct access pointer is defined, it will be used in priority
-        // 1. Direct value access
-        volatile uint32_t* value = nullptr;            // Pointer to the register value - uint32_t for atomicity
-        // 2. Read/write callbacks
-        ReadCallback readCb = nullptr;                 // Read callback
-        WriteCallback writeCb = nullptr;               // Write callback
-
-        operator bool() const {
-            return Modbus::isValid(type);             // A register is valid if its type is valid
-        }
-    };
-
-    // ===================================================================================
     // CONSTRUCTOR & PUBLIC METHODS
     // ===================================================================================
 
-    Server(ModbusInterface::IInterface& interface, uint8_t slaveId = 1, bool rejectUndefined = true);
+    // Constructor with WordStore (now mandatory)
+    Server(ModbusInterface::IInterface& interface, IWordStore& store, uint8_t slaveId = 1, bool rejectUndefined = true);
+    
     ~Server();
 
     Result begin();
-    Result setRegisterCount(const Modbus::RegisterType type, const uint16_t count);
-    Result addRegister(const Register& reg);
-    Result addRegisters(const std::vector<Register>& registers);
-    Result clearAllRegisters();
-    Register getRegister(Modbus::RegisterType type, uint16_t address);
-    void poll();
+    
+    Result clearAllWords();
+    
+    // Word management methods
+    Result addWord(const Word& word);
+    Result addWords(const std::vector<Word>& words);
+    Result addWords(const Word* words, size_t count);
+    Word getWord(Modbus::RegisterType type, uint16_t startAddr);
+    
     bool isBusy();
 
 private:
     // ===================================================================================
-    // PRIVATE DATA STRUCTURES
-    // ===================================================================================
-
-    /* @brief Internal structure to store register metadata & value pointers
-     */
-    struct RegisterEntry {
-        Modbus::RegisterType type;
-        uint16_t address;
-        const char* name = "";
-        volatile uint32_t* value = nullptr;
-        uint32_t cbIndex = UINT32_MAX;
-
-        Register toRegister(Server* srv);
-    };
-
-    /* @brief Internal structure to store read/write callbacks (memory optimized)
-     */
-    struct CBEntry {
-        ReadCallback readCb{nullptr};
-        WriteCallback writeCb{nullptr};
-    };
-
-    using RegisterStore = std::vector<RegisterEntry>;   // Stores a set of RegisterEntry objects
-    using CBStore = std::vector<CBEntry>;               // Stores a set of CBEntry objects
-
-    // ===================================================================================
     // PRIVATE MEMBERS
     // ===================================================================================
 
+    // Configuration
     ModbusInterface::IInterface& _interface;
     uint8_t _serverId;
     bool _rejectUndefined; // If false, undefined registers will be silently ignored (no exception returned)
     bool _isInitialized = false;
+    Modbus::Frame _responseBuffer;
     
-    // Mutex protection
-    Mutex _handleRequestMutex;
-    Mutex _registerStoreMutex;
-
-    // Registers & callback stores
-    RegisterStore _discreteInputStore;
-    RegisterStore _coilStore;
-    RegisterStore _inputRegisterStore;
-    RegisterStore _holdingRegisterStore;
-    CBStore _cbStore;
+    // WordStore & buffer for word operations
+    IWordStore& _wordStore;
+    uint16_t _wordBuffer[MAX_WORD_SIZE];
+    
+    // Global mutex : protects both requests and WordStore modifications
+    Mutex _serverMutex;
 
     // ===================================================================================
     // PRIVATE METHODS
@@ -216,24 +156,20 @@ private:
 
     // Request handlers
     Result handleRequest(const Modbus::Frame& request);
-    Result handleRead(const Modbus::Frame& request, Modbus::Frame& response, RegisterStore* regStore);
-    Result handleWrite(const Modbus::Frame& request, Modbus::Frame& response, RegisterStore* regStore);
+    Result handleRead(const Modbus::Frame& request, Modbus::Frame& response);
+    Result handleWrite(const Modbus::Frame& request, Modbus::Frame& response);
     Result sendResponse(const Modbus::Frame& response);
 
-    // Find entry/store helpers
-    RegisterStore* findRegisterStore(Modbus::RegisterType type);
-    RegisterStore* findRegisterStore(Modbus::FunctionCode fc);
-    RegisterEntry* findRegisterEntry(const Modbus::RegisterType type, const uint16_t address);
-    RegisterEntry* findRegisterEntry(RegisterStore* regStore, const uint16_t address);
-    CBEntry* findCBEntry(const uint32_t cbIndex);
-    ReadCallback findReadCallback(const RegisterEntry& reg);
-    WriteCallback findWriteCallback(const RegisterEntry& reg);
+    // Find helpers
     
-    // Register helpers
-    bool registerExists(const Register& reg);
-    bool wouldOverflow(const Modbus::RegisterType type, const size_t additionalCount);
-    void addRegisterInternal(const Register& reg);
-    Result isValidEntry(const Register& reg);
+    // Word helpers (simplified - no more legacy WordStore methods)
+    Word* findWordEntry(const Modbus::RegisterType type, const uint16_t address);
+    bool wordExists(const Word& word);
+    bool wordOverlaps(const Word& word);
+    bool validateNoOverlapsInStore(Modbus::RegisterType type);
+    Result addWordInternal(const Word& word);
+    Result isValidWordEntry(const Word& word);
+    
     static bool isWrite(const Modbus::FunctionCode fc);
     static bool isReadOnly(const Modbus::RegisterType type);
 };

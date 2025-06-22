@@ -1,5 +1,5 @@
 /**
- * @file ModbusLogger.h
+ * @file ModbusLogger.hpp
  * @brief Thread-safe & non-blocking log sink implementation for EZModbus debug output
  */
 
@@ -14,6 +14,8 @@
 #include <freertos/event_groups.h>
 #include <string.h>
 #include <stdarg.h>
+#include <cstdio>
+#include <cstdarg>
 
 // Driver includes for log output
 #ifdef ARDUINO
@@ -59,10 +61,10 @@ class Logger {
 
 public:
     static constexpr size_t QUEUE_SIZE = 16;
-    static constexpr size_t MAX_MSG_SIZE = 512;
+    static constexpr size_t MAX_MSG_SIZE = 256;
     static constexpr size_t TASK_PRIORITY = 1;
     static constexpr uint32_t STACK_SIZE = 4096;
-    static constexpr uint32_t CHECK_INTERVAL = 100;
+    static constexpr uint32_t CHECK_INTERVAL_MS = 100;
     
     // Event bits for queue status
     static constexpr EventBits_t QUEUE_EMPTY_BIT = BIT0;
@@ -111,17 +113,22 @@ public:
         sendToQueue(buffer);
     }
 
-    static void logf(const char* format, ...) {
+    template<typename... Args>
+    static void logf(const char* format, Args&&... args) {
         char buffer[MAX_MSG_SIZE];
-        va_list args;
-        va_start(args, format);
-        int len = vsnprintf(buffer, sizeof(buffer), format, args);
-        va_end(args);
+        int len = snprintf(buffer, sizeof(buffer), format, std::forward<Args>(args)...);
         
-        // Ensure we don't exceed buffer bounds
+        // Ensure we don't exceed buffer bounds, add ellipsis if truncated
         if (len >= MAX_MSG_SIZE) {
             len = MAX_MSG_SIZE - 1;
             buffer[len] = '\0';
+
+            // Place ellipsis at the end (before potential newline) → indices -5, -4, -3
+            if (MAX_MSG_SIZE >= 5) {
+                buffer[MAX_MSG_SIZE - 5] = '.';
+                buffer[MAX_MSG_SIZE - 4] = '.';
+                buffer[MAX_MSG_SIZE - 3] = '.';
+            }
         }
         
         // Strip any trailing newlines to ensure consistent formatting
@@ -132,10 +139,14 @@ public:
             len--;
         }
         
-        // Add exactly one newline at the end
-        if (len < MAX_MSG_SIZE - 2) { // Leave space for \n and \0
+        // Ensure exactly one newline at the end even when the message was truncated
+        // If there is room, append it; otherwise overwrite the last printable character
+        if (len < MAX_MSG_SIZE - 2) {            // Standard case → we still have space
             buffer[len] = '\n';
             buffer[len + 1] = '\0';
+        } else {                                 // Buffer was filled → force newline at the end
+            buffer[MAX_MSG_SIZE - 2] = '\n';   // Reserve last char for null terminator
+            buffer[MAX_MSG_SIZE - 1] = '\0';
         }
         
         sendToQueue(buffer);
@@ -182,7 +193,7 @@ private:
     static void logTask(void* parameter) {
         LogMessage msg;
         while (true) {
-            if (xQueueReceive(logQueue, &msg, CHECK_INTERVAL) == pdTRUE) {
+            if (xQueueReceive(logQueue, &msg, CHECK_INTERVAL_MS) == pdTRUE) {
                 writeOutput(msg.msg, strlen(msg.msg));
                 
                 // Check if queue is now empty and set bit accordingly

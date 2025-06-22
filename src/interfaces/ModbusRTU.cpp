@@ -15,12 +15,12 @@ RTU::RTU(ModbusHAL::UART& uart, Modbus::Role role)
       _rxBuffer(_rxBuf.data(), _rxBuf.size()),
       _txBuffer(_txBuf.data(), _txBuf.size()),
       _txMutex(),
-      _rxTxTaskHandle(nullptr),
+      _txResultCallback(nullptr),
+      _txCallbackCtx(nullptr),
       _rxEventQueue(nullptr),
       _txRequestQueue(nullptr),
       _eventQueueSet(nullptr),
-      _txResultCallback(nullptr),
-      _txCallbackCtx(nullptr)
+      _rxTxTaskHandle(nullptr)
 {
     this->_role = role; 
 }
@@ -117,7 +117,7 @@ RTU::Result RTU::begin() {
         return Error(ERR_INIT_FAILED, "failed to configure UART idle detection");
     }
 
-    Modbus::Debug::LOG_MSGF("Interface ready. UART Port: %d, silence time: %llu us. Call setSilenceTimeMs to override", _uartHAL.getPort(), _silenceTimeUs);
+    Modbus::Debug::LOG_MSGF("Interface ready. UART Port: %d, silence time: %u us. Call setSilenceTimeMs to override", _uartHAL.getPort(), (uint32_t)_silenceTimeUs);
     
     return Success();
 }
@@ -163,12 +163,16 @@ RTU::Result RTU::setSilenceTimeBaud() {
     }
     
     // Calculate the silence time based on the baud rate
-    constexpr uint32_t bitsPerChar = 11; 
-    constexpr uint32_t usPerSec = 1000000;
-    constexpr float charMultiplier = 3.5f;
-    uint64_t usPerChar_calc = (bitsPerChar * usPerSec) / baudRate;
-    uint64_t newSilenceTimeUs = static_cast<uint64_t>(charMultiplier * usPerChar_calc);
-    newSilenceTimeUs += 200; // Add 200us margin
+    // Modbus RTU specification: 3.5 character times for frame separation
+    // For baud rates > 19200, use fixed 1.75 ms per specification
+    uint64_t newSilenceTimeUs;
+    if (baudRate > 19200) {
+        newSilenceTimeUs = 1750; // 1.75 ms
+    } else {
+        constexpr uint32_t bitsPerChar = 11;      // 1 start + 8 data + parity + stop
+        uint64_t charTimeUs = (static_cast<uint64_t>(bitsPerChar) * 1000000ULL) / baudRate;
+        newSilenceTimeUs = (charTimeUs * 35ULL) / 10ULL; // 3.5 chars = 35/10
+    }
 
     // Apply the new silence time only if it's different from the current one
     if (newSilenceTimeUs != _silenceTimeUs) {
@@ -222,13 +226,8 @@ RTU::Result RTU::sendFrame(const Modbus::Frame& frame, TxResultCallback txCallba
         }
     } // Mutex released here (end of RAII scope)
 
-    #ifdef EZMODBUS_DEBUG
-    {
-        char prefix[128];
-        snprintf(prefix, sizeof(prefix), "Encoded TX frame (%zu bytes) for port %d: ", _txBuffer.size(), (int)_uartHAL.getPort());
-        Modbus::Debug::LOG_HEXDUMP(_txBuffer, prefix);
-    }
-    #endif
+    Modbus::Debug::LOG_MSGF("Encoded TX frame (%u bytes) for port %d", (uint32_t)_txBuffer.size(), (int)_uartHAL.getPort());
+    Modbus::Debug::LOG_HEXDUMP(_txBuffer);
 
     if (_role == Modbus::MASTER && frame.type == Modbus::REQUEST) {
         _rtt.start(&_rtt.storeUs); // Start RTT for master request (using stored start time)
@@ -293,7 +292,11 @@ void RTU::beginCleanup() {
  */
 void RTU::killRxTxTask() {
     if (_rxTxTaskHandle && _rxEventQueue) {
-        uart_event_t dummy_evt = {.type = UART_EVENT_MAX}; 
+        // Send a dummy event to wake up the rxTxTask
+        uart_event_t dummy_evt = {
+            .type = UART_EVENT_MAX,
+            .size = 0,
+            .timeout_flag = false }; 
         xQueueSend(_rxEventQueue, &dummy_evt, 0); 
         vTaskDelay(pdMS_TO_TICKS(RXTX_QUEUE_CHECK_TIMEOUT_MS + 50)); // Wait a bit more than RxTxTask queue check timeout
     }
@@ -309,13 +312,8 @@ RTU::Result RTU::processReceivedFrame(const ByteBuffer& frameBytes) {
         return Error(ERR_INVALID_FRAME, "called with empty buffer, no frame to process");
     }
 
-    #ifdef EZMODBUS_DEBUG
-    {
-        char prefix[128]; 
-        snprintf(prefix, sizeof(prefix), "Received raw data (%zu bytes) from port %d: ", frameBytes.size(), (int)_uartHAL.getPort());
-        Modbus::Debug::LOG_HEXDUMP(frameBytes, prefix);
-    }
-    #endif
+    Modbus::Debug::LOG_MSGF("Received raw data (%u bytes) from port %d", (uint32_t)frameBytes.size(), (int)_uartHAL.getPort());
+    Modbus::Debug::LOG_HEXDUMP(frameBytes);
 
     Modbus::Frame receivedFrame;
     Modbus::MsgType msgType;
@@ -365,7 +363,7 @@ RTU::Result RTU::updateUartIdleDetection() {
         return Error(ERR_CONFIG_FAILED, esp_err_to_name(err));
     }
 
-    Modbus::Debug::LOG_MSGF("UART idle detection time set to: %d us", _silenceTimeUs);
+    Modbus::Debug::LOG_MSGF("UART idle detection time set to: %u us", (uint32_t)_silenceTimeUs);
     return Success();
 }
 
@@ -411,7 +409,7 @@ RTU::Result RTU::handleUartEvent(const uart_event_t& event) {
                 // & flush or let processReceivedFrame() fail).
                 if (bytesActuallyRead > 0) {
                     _rxBuffer.trim(currentSize + bytesActuallyRead);
-                    Modbus::Debug::LOG_MSGF("Pulled %d bytes from UART into RX buffer, total %zu", bytesActuallyRead, _rxBuffer.size());
+                    Modbus::Debug::LOG_MSGF("Pulled %d bytes from UART into RX buffer, total %u", bytesActuallyRead, (uint32_t)_rxBuffer.size());
                 } 
 
                 // If read returned <0, it indicates an UART error, we flush everything
@@ -430,7 +428,7 @@ RTU::Result RTU::handleUartEvent(const uart_event_t& event) {
 
             // If RX timeout occurred (event.timeout_flag is true), process the accumulated data as a frame
             if (event.timeout_flag) {
-                Modbus::Debug::LOG_MSGF("Silence time detected by UART driver, processing RX buffer (%zu bytes)", _rxBuffer.size());
+                Modbus::Debug::LOG_MSGF("Silence time detected by UART driver, processing RX buffer (%u bytes)", (uint32_t)_rxBuffer.size());
                 if (_rxBuffer.size() > 0) {
                     processReceivedFrame(_rxBuffer);
                 }
@@ -470,13 +468,8 @@ RTU::Result RTU::handleTxRequest() {
     Result send_res; // Sera initialisé dans la logique ci-dessous
 
     if (_txBuffer.size() > 0) { 
-        #ifdef EZMODBUS_DEBUG
-        {
-            char prefix[128];
-            snprintf(prefix, sizeof(prefix), "rxTxTask sending raw frame (%zu bytes) from port %d: ", _txBuffer.size(), (int)_uartHAL.getPort());
-            Modbus::Debug::LOG_HEXDUMP(_txBuffer, prefix);
-        }
-        #endif
+        Modbus::Debug::LOG_MSGF("rxTxTask sending raw frame (%u bytes) from port %d", (uint32_t)_txBuffer.size(), (int)_uartHAL.getPort());
+        Modbus::Debug::LOG_HEXDUMP(_txBuffer);
 
         // Wait for the silence time to pass if needed
         uint64_t lastTxElapsedUs = TIME_US() - _lastTxTimeUs;
