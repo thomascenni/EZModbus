@@ -1,5 +1,21 @@
 ## IDF Component Manager Manifest File
-version: "0.1.0"
-description: EZModbus library for ESP32 (IDF component)
+version: "1.1.0"
+description: "EZModbus - C++ FreeRTOS Modbus library for ESP32"
+license: "MIT"
+url: "https://github.com/pierrejay/EZModbus/"
+repository: "https://github.com/pierrejay/EZModbus.git"
+documentation: "https://pierre-jay.gitbook.io/ezmodbus-docs"
+tags:
+  - modbus
+  - networking
+  - rtu
+  - tcp
+  - industrial
+  - automation
 dependencies:
   idf: ">=5.4"
+files:
+  exclude:
+    - "examples/platformio/**/*"  # Exclude PlatformIO tests
+    - "platformio.ini"            # Exclude PlatformIO configuration
+    - "library.json"              # Exclude PlatformIO library descriptor
