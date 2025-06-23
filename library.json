@@ -1,8 +1,8 @@
 {
   "name": "EZModbus",
-  "version": "0.1.0",
-  "description": "C++ Modbus RTU/TCP library for ESP32",
-  "keywords": ["modbus", "rtu", "tcp", "communication", "industrial"],
+  "version": "1.1.0",
+  "description": "EZModbus - C++ FreeRTOS Modbus library for ESP32",
+  "keywords": ["modbus", "networking", "rtu", "tcp", "industrial", "automation"],
   "authors": [
     {
       "name": "Pierre Jay",
