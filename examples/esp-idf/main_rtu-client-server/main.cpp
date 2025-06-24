@@ -73,12 +73,13 @@ void clientTask(void *pvParameters) {
             continue;
         }
 
-        Modbus::Frame readRequest;
-        readRequest.type = Modbus::REQUEST;
-        readRequest.fc = Modbus::READ_HOLDING_REGISTERS;
-        readRequest.slaveId = SERVER_SLAVE_ID;
-        readRequest.regAddress = TARGET_REGISTER;
-        readRequest.regCount = 1;
+        Modbus::Frame readRequest = {
+            .type = Modbus::REQUEST,
+            .fc = Modbus::READ_HOLDING_REGISTERS,
+            .slaveId = SERVER_SLAVE_ID,
+            .regAddress = TARGET_REGISTER,
+            .regCount = 1
+        };
 
         Modbus::Frame readResponse;
         ESP_LOGI(TAG_CLIENT_TASK, "Sending READ request for register %u...", TARGET_REGISTER);
@@ -98,13 +99,14 @@ void clientTask(void *pvParameters) {
         uint16_t receivedValue = readResponse.getRegister(0);
         ESP_LOGI(TAG_CLIENT_TASK, "READ response: Register %u = %u", TARGET_REGISTER, receivedValue);
 
+        Modbus::Frame writeRequest = {
+            .type = Modbus::REQUEST,
+            .fc = Modbus::WRITE_REGISTER,
+            .slaveId = SERVER_SLAVE_ID,
+            .regAddress = TARGET_REGISTER,
+            .regCount = 1
+        };
         valueToWrite = receivedValue + 1;
-        Modbus::Frame writeRequest;
-        writeRequest.type = Modbus::REQUEST;
-        writeRequest.fc = Modbus::WRITE_REGISTER;
-        writeRequest.slaveId = SERVER_SLAVE_ID;
-        writeRequest.regAddress = TARGET_REGISTER;
-        writeRequest.regCount = 1;
         writeRequest.setRegisters({valueToWrite});
 
         Modbus::Frame writeResponse;
