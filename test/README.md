@@ -2,7 +2,7 @@
 
 ## Overview
 
-This test suite is designed for **PlatformIO with Arduino Core 3.0+** and uses custom testing frameworks optimized for that environment.
+This test suite is designed for **PlatformIO with Arduino Core 3.0+** and uses the Unity testing framework.
 
 ## Important Notice
 
@@ -11,8 +11,7 @@ This test suite is designed for **PlatformIO with Arduino Core 3.0+** and uses c
 The tests in this directory:
 - Use PlatformIO-specific testing utilities
 - Rely on Arduino Core abstractions
-- Include custom mocking frameworks for the Arduino environment
-- Are not designed to compile under ESP-IDF's CMake build system
+- Include custom mocks with Arduino dependencies
 
 ## For ESP-IDF Users
 
@@ -25,7 +24,7 @@ If you're using EZModbus in an ESP-IDF project:
 
 To run these tests:
 1. Use PlatformIO with Arduino Core 3.0+
-2. Setup your ESP32-S3 board in "loopback mode" with the following pin connections:
+2. Setup your ESP32-S3 board with the following pin connections (for RTU loopback tests):
    ```
    RX1 (Pin 44) ←→ TX2 (Pin 43)
    TX1 (Pin 7)  ←→ RX2 (Pin 6)
