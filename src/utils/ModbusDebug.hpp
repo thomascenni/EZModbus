@@ -8,6 +8,10 @@
 #include "core/ModbusCore.h"
 #include "core/ModbusFrame.hpp"
 
+#ifndef EZMODBUS_MAX_DEBUG_MSG_SIZE // Maximum length for a formatted debug message (including null terminator)
+    #define EZMODBUS_MAX_DEBUG_MSG_SIZE 256
+#endif
+
 namespace Modbus {
 namespace Debug {
 
@@ -25,7 +29,7 @@ struct CallCtx {
 };
 
 /* @brief Maximum size for a formatted debug message (including null terminator) */
-constexpr std::size_t MAX_DEBUG_MSG_SIZE = 256;
+constexpr size_t MAX_DEBUG_MSG_SIZE = (size_t)EZMODBUS_MAX_DEBUG_MSG_SIZE;
 
 } // namespace Debug
 } // namespace Modbus

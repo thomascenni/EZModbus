@@ -10,6 +10,11 @@
 #include "interfaces/ModbusInterface.hpp"
 #include "utils/ModbusDebug.hpp"
 
+#ifndef EZMODBUS_SERVER_MAX_WORD_SIZE // Server max word size (# Modbus registers per Word)
+    #define EZMODBUS_SERVER_MAX_WORD_SIZE 8
+#endif
+
+
 namespace Modbus {
 
 class Server {
@@ -19,8 +24,7 @@ public:
     // ===================================================================================
 
     static constexpr uint32_t MAX_REGISTERS = 65535;
-    static constexpr uint32_t RESPONSE_TX_TIMEOUT_MS = 1000;
-    static constexpr size_t MAX_WORD_SIZE = 8; // max no. registers per word
+    static constexpr size_t MAX_WORD_SIZE = (size_t)EZMODBUS_SERVER_MAX_WORD_SIZE; // max no. registers per word
 
     // ===================================================================================
     // RESULT TYPES

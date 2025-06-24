@@ -9,6 +9,9 @@
 #include "interfaces/ModbusInterface.hpp"
 #include "utils/ModbusDebug.hpp"
 
+#ifndef EZMODBUS_CLIENT_REQ_TIMEOUT // Client request timeout (ms)
+    #define EZMODBUS_CLIENT_REQ_TIMEOUT 1000
+#endif
 
 namespace Modbus {
 
@@ -18,7 +21,7 @@ public:
     // CONSTANTS
     // ===================================================================================
 
-    static constexpr uint32_t DEFAULT_REQUEST_TIMEOUT_MS = 1000; // Max RTT before aborting the current request
+    static constexpr uint32_t DEFAULT_REQUEST_TIMEOUT_MS = (uint32_t)EZMODBUS_CLIENT_REQ_TIMEOUT; // Max RTT before aborting the current request
     static constexpr EventBits_t SYNC_COMPLETION_BIT = 0x01; // Bitmask to set for sync path in sendRequest()
 
 

@@ -24,6 +24,20 @@
     #include <driver/uart.h>
 #endif
 
+#ifndef EZMODBUS_LOG_Q_SIZE // Log queue size (# of messages)
+    #define EZMODBUS_LOG_Q_SIZE 16
+#endif
+#ifndef EZMODBUS_LOG_MAX_MSG_SIZE // Maximum length for a formatted debug message (including null terminator)
+    #define EZMODBUS_LOG_MAX_MSG_SIZE 256
+#endif
+#ifndef EZMODBUS_LOG_TASK_PRIORITY // Log task priority
+    #define EZMODBUS_LOG_TASK_PRIORITY 1
+#endif
+#ifndef EZMODBUS_LOG_TASK_STACK_SIZE // Log task stack size (bytes)
+    #define EZMODBUS_LOG_TASK_STACK_SIZE 4096
+#endif
+
+
 // =============================================================================
 // LOG DESTINATION & CHUNK SIZE CONFIGURATION
 // =============================================================================
@@ -60,10 +74,10 @@ namespace Modbus {
 class Logger {
 
 public:
-    static constexpr size_t QUEUE_SIZE = 16;
-    static constexpr size_t MAX_MSG_SIZE = 256;
-    static constexpr size_t TASK_PRIORITY = 1;
-    static constexpr uint32_t STACK_SIZE = 4096;
+    static constexpr size_t QUEUE_SIZE = (size_t)EZMODBUS_LOG_Q_SIZE;
+    static constexpr size_t MAX_MSG_SIZE = (size_t)EZMODBUS_LOG_MAX_MSG_SIZE;
+    static constexpr size_t TASK_PRIORITY = (size_t)EZMODBUS_LOG_TASK_PRIORITY;
+    static constexpr uint32_t STACK_SIZE = (uint32_t)EZMODBUS_LOG_TASK_STACK_SIZE;
     static constexpr uint32_t CHECK_INTERVAL_MS = 100;
     
     // Event bits for queue status

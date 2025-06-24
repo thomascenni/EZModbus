@@ -14,6 +14,18 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
+#ifndef EZMODBUS_TCP_TXN_SAFETY_TIMEOUT // TCP transaction safety timeout (ms)
+    #define EZMODBUS_TCP_TXN_SAFETY_TIMEOUT 5000
+#endif
+
+#ifndef EZMODBUS_TCP_RXTX_TASK_STACK_SIZE // TCP RX/TX task stack size (bytes)
+    #ifdef EZMODBUS_DEBUG
+        #define EZMODBUS_TCP_RXTX_TASK_STACK_SIZE 6144
+    #else
+        #define EZMODBUS_TCP_RXTX_TASK_STACK_SIZE 4096
+    #endif
+#endif
+
 namespace ModbusInterface {
 
 class TCP : public IInterface {
@@ -26,14 +38,10 @@ public:
     static constexpr uint32_t RX_ASSEMBLY_TIMEOUT_MS = 50;
     static constexpr uint32_t RXTX_QUEUE_CHECK_TIMEOUT_MS = 100; // Added for task management
     // Safety timeout - much longer than client timeout for emergency cleanup
-    static constexpr uint32_t TCP_TRANSACTION_SAFETY_TIMEOUT_MS = 5000;
+    static constexpr uint32_t TCP_TRANSACTION_SAFETY_TIMEOUT_MS = (uint32_t)EZMODBUS_TCP_TXN_SAFETY_TIMEOUT;
 
     // Tasks stack sizes (higher for debug to let room for the printf/hexdump buffers)
-    #ifdef EZMODBUS_DEBUG
-        static constexpr uint32_t RXTX_TASK_STACK_SIZE = 6144;
-    #else
-        static constexpr uint32_t RXTX_TASK_STACK_SIZE = 4096;
-    #endif
+    static constexpr uint32_t RXTX_TASK_STACK_SIZE = (uint32_t)EZMODBUS_TCP_RXTX_TASK_STACK_SIZE;
 
     // ===================================================================================
     // DATA STRUCTURES

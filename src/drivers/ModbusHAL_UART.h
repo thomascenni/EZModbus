@@ -17,6 +17,10 @@
 #include <HardwareSerial.h> // For Arduino compatibility
 #endif
 
+#ifndef EZMODBUS_HAL_UART_EVT_Q_SIZE // UART event queue size (# of events)
+    #define EZMODBUS_HAL_UART_EVT_Q_SIZE 20
+#endif
+
 namespace ModbusHAL {
 
 class UART {
@@ -25,6 +29,14 @@ public:
 // ===================================================================================
 // CONSTANTS
 // ===================================================================================
+
+    // Internal constants for the UART driver
+    static constexpr int MAX_TOUT_THRESH = 102;
+    static constexpr int DRIVER_RX_BUFFER_SIZE = 512; 
+    static constexpr int DRIVER_TX_BUFFER_SIZE = 256; // Set to 0 for a blocking TX without driver buffer
+    static constexpr int DRIVER_EVENT_QUEUE_SIZE = (int)EZMODBUS_HAL_UART_EVT_Q_SIZE; // Will be used internally
+    static constexpr int WRITE_TIMEOUT_MS = 1000;
+    static constexpr int READ_TIMEOUT_MS = 10; 
 
     // Configuration flags
     static constexpr uint32_t CONFIG_5N1 = UART_DATA_5_BITS | (UART_PARITY_DISABLE << 8) | (UART_STOP_BITS_1 << 16);
@@ -51,14 +63,6 @@ public:
     static constexpr uint32_t CONFIG_8E2 = UART_DATA_8_BITS | (UART_PARITY_EVEN    << 8) | (UART_STOP_BITS_2 << 16);
     static constexpr uint32_t CONFIG_8O1 = UART_DATA_8_BITS | (UART_PARITY_ODD     << 8) | (UART_STOP_BITS_1 << 16);
     static constexpr uint32_t CONFIG_8O2 = UART_DATA_8_BITS | (UART_PARITY_ODD     << 8) | (UART_STOP_BITS_2 << 16);
-
-    // Internal constants for the UART driver
-    static constexpr int MAX_TOUT_THRESH = 102;
-    static constexpr int DRIVER_RX_BUFFER_SIZE = 512; 
-    static constexpr int DRIVER_TX_BUFFER_SIZE = 256; // Set to 0 for a blocking TX without driver buffer
-    static constexpr int DRIVER_EVENT_QUEUE_SIZE = 20; // Will be used internally
-    static constexpr int WRITE_TIMEOUT_MS = 1000;
-    static constexpr int READ_TIMEOUT_MS = 10; 
 
 // ===================================================================================
 // CONFIG STRUCTS

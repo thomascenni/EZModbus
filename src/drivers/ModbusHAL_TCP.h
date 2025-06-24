@@ -16,16 +16,28 @@
 #include <arpa/inet.h>
 #include "esp_netif.h"
 
+#ifndef EZMODBUS_HAL_TCP_MAX_ACTIVE_SOCKETS // TCP max active sockets (#)
+    #define EZMODBUS_HAL_TCP_MAX_ACTIVE_SOCKETS 4
+#endif
+#ifndef EZMODBUS_HAL_TCP_RX_Q_SIZE // TCP RX queue size (# of frames)
+    #define EZMODBUS_HAL_TCP_RX_Q_SIZE 16
+#endif
+#ifndef EZMODBUS_HAL_TCP_TASK_STACK_SIZE // TCP RX/TX task stack size (bytes)
+    #define EZMODBUS_HAL_TCP_TASK_STACK_SIZE 4096
+#endif
+
+
 namespace ModbusHAL {
 
 class TCP {
 public:
     enum CfgMode { UNINIT, SERVER, CLIENT };
 
-    static constexpr size_t MAX_ACTIVE_SOCKETS = 4;
+    static constexpr size_t MAX_ACTIVE_SOCKETS = (size_t)EZMODBUS_HAL_TCP_MAX_ACTIVE_SOCKETS;
+    static constexpr size_t RX_QUEUE_SIZE = (size_t)EZMODBUS_HAL_TCP_RX_Q_SIZE; // Number of Modbus frames the RX queue can hold
+    static constexpr size_t TCP_TASK_STACK_SIZE = (size_t)EZMODBUS_HAL_TCP_TASK_STACK_SIZE;
     static constexpr size_t MAX_MODBUS_FRAME_SIZE = 260;  // Modbus TCP max frame size (MBAP + PDU)
-    static constexpr size_t RX_QUEUE_SIZE = 16; // Number of Modbus frames the RX queue can hold
-    static constexpr size_t TCP_TASK_STACK_SIZE = 4096;
+
     // Structure for messages exchanged between HAL and Modbus layer
     struct TCPMsg {
         uint8_t payload[MAX_MODBUS_FRAME_SIZE];
