@@ -5,6 +5,9 @@ license: "MIT"
 url: "https://github.com/pierrejay/EZModbus/"
 repository: "https://github.com/pierrejay/EZModbus.git"
 documentation: "https://pierre-jay.gitbook.io/ezmodbus-docs"
+issues: "https://github.com/pierrejay/EZModbus/issues"
+maintainers:
+  - "Pierre Jay <pierre.jay@gmail.com>"
 tags:
   - modbus
   - networking
@@ -16,6 +19,8 @@ dependencies:
   idf: ">=5.4"
 files:
   exclude:
-    - "examples/platformio/**/*"  # Exclude PlatformIO tests
+    - "examples/platformio/**/*"  # Exclude PlatformIO examples
     - "platformio.ini"            # Exclude PlatformIO configuration
     - "library.json"              # Exclude PlatformIO library descriptor
+    - "test/**/*"                 # Exclude PlatformIO tests
+    - ".DS_Store"
