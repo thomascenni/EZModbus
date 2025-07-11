@@ -254,7 +254,6 @@ esp_err_t UART::waitTxComplete(TickType_t timeout_ticks) const {
  * @note If the DE/RTS pin is not available, the driver will fall back to UART mode
  */
 esp_err_t UART::setRS485Mode(bool enable) {
-    if (!_is_driver_installed) return ESP_ERR_INVALID_STATE;
     if (_pin_rts_de == GPIO_NUM_NC && enable) {
         return ESP_ERR_INVALID_ARG; // Impossible to enable RS485 mode without DE/RTS pin
     }
